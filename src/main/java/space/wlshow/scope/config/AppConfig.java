@@ -2,12 +2,41 @@ package space.wlshow.scope.config;
 
 import com.typesafe.config.Config;
 import com.typesafe.config.ConfigFactory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
 
 public final class AppConfig {
 
-    private static final Config CFG = ConfigFactory.load();
+    private static final Logger log = LoggerFactory.getLogger(AppConfig.class);
+
+    private static final String LOCAL_RESOURCE = "application-local.conf";
+    private static final String BASE_RESOURCE  = "application.conf";
+
+    private static final Config CFG = loadLayered();
+
+    /**
+     * 加载优先级：系统属性(-D) > application-local.conf（如存在，gitignored）> application.conf > reference.conf
+     * <p>
+     * 本地文件不存在时 {@code parseResources} 返回空 Config，整套机制自动降级为
+     * 标准 {@code ConfigFactory.load()} 行为，不需要额外开关。
+     */
+    private static Config loadLayered() {
+        Config local = ConfigFactory.parseResources(LOCAL_RESOURCE);
+        Config base  = ConfigFactory.parseResources(BASE_RESOURCE);
+
+        if (local.isEmpty()) {
+            log.info("config source: {} (no local override)", BASE_RESOURCE);
+        } else {
+            log.info("config source: {} overlaid on {}", LOCAL_RESOURCE, BASE_RESOURCE);
+        }
+
+        return ConfigFactory.systemProperties()
+                .withFallback(local)
+                .withFallback(base)
+                .resolve();
+    }
 
     public static String modelProvider() {
         return CFG.getString("model.provider");

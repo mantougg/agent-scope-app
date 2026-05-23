@@ -483,6 +483,94 @@ $env:ARK_API_KEY='apikey-xxxxxxxx'; mvn -q compile exec:java "-Dexec.mainClass=s
 - [ ] `ConfigCheck` 能打印出 7 行配置（apiKey 被脱敏）
 - [ ] 故意 unset 环境变量后跑，能看到清晰的 `IllegalStateException` 提示
 
+### 5.5 本地配置覆盖（可选，但推荐）
+
+把**会变的东西**（你自己的模型名、接入点 ID、自定义 baseUrl）从 `application.conf` 里抽出来，放到一个 gitignored 的 `application-local.conf` 中。这样：
+
+- `application.conf`（**进 git**）= 团队公共默认值
+- `application-local.conf`（**gitignored**）= 你机器本地覆盖
+
+#### 5.5.1 让 `AppConfig` 支持叠加加载
+
+把 `AppConfig.java` 顶部的 `private static final Config CFG = ConfigFactory.load();` 换成：
+
+```java
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+// ...
+
+private static final Logger log = LoggerFactory.getLogger(AppConfig.class);
+
+private static final String LOCAL_RESOURCE = "application-local.conf";
+private static final String BASE_RESOURCE  = "application.conf";
+
+private static final Config CFG = loadLayered();
+
+/**
+ * 优先级：系统属性(-D) > application-local.conf（如存在）> application.conf > reference.conf
+ * 本地文件不存在时 parseResources 返回空 Config，自动降级到普通 load() 行为。
+ */
+private static Config loadLayered() {
+    Config local = ConfigFactory.parseResources(LOCAL_RESOURCE);
+    Config base  = ConfigFactory.parseResources(BASE_RESOURCE);
+
+    if (local.isEmpty()) {
+        log.info("config source: {} (no local override)", BASE_RESOURCE);
+    } else {
+        log.info("config source: {} overlaid on {}", LOCAL_RESOURCE, BASE_RESOURCE);
+    }
+
+    return ConfigFactory.systemProperties()
+            .withFallback(local)
+            .withFallback(base)
+            .resolve();
+}
+```
+
+#### 5.5.2 创建 `src/main/resources/application-local.conf`
+
+只写你想覆盖的字段即可，其余从 `application.conf` 继承：
+
+```hocon
+# 本地配置覆盖（gitignored）
+# AppConfig 会用本文件叠加到 application.conf 上面
+model {
+  name    = "kimi-k2.6"
+  baseUrl = "https://ark.cn-beijing.volces.com/api/coding/v3"
+}
+```
+
+#### 5.5.3 加到 `.gitignore`
+
+```gitignore
+# Local config override
+src/main/resources/application-local.conf
+```
+
+> 已经有 `application-local.properties` / `application-local.yml` 那两行（Spring Boot 习惯）的话，添一行 `application-local.conf` 即可。
+
+#### 5.5.4 验证
+
+```bash
+ARK_API_KEY='apikey-xxxxxxxx' mvn -q compile exec:java -Dexec.mainClass=space.wlshow.scope.ConfigCheck
+```
+
+期望第一行：
+```
+INFO  s.w.s.config.AppConfig - config source: application-local.conf overlaid on application.conf
+```
+
+且 `model` / `baseUrl` 显示的是 local 文件里的值，而 `provider` / `agent.*` 仍然是 `application.conf` 里的默认。
+
+把 `application-local.conf` 临时改名（如 `application-local.conf.off`）再跑，应该看到：
+```
+INFO  s.w.s.config.AppConfig - config source: application.conf (no local override)
+```
+所有字段回退到 `application.conf` 默认值。
+
+> 💡 同样的模式也可以扩展出 `application-prod.conf`、`application-test.conf` 等——只要 `loadLayered()` 按需多叠几层就行。Day 7 部署/测试章节会再用到这套。
+
 ---
 
 ## 6. Phase 3 · Hello World 同步调用（90 min）
