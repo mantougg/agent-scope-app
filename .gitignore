@@ -1,0 +1,140 @@
+# --------------------------
+# Java compiled class files
+# --------------------------
+*.class
+
+# --------------------------
+# Logs
+# --------------------------
+*.log
+
+# --------------------------
+# Package files
+# --------------------------
+*.jar
+*.war
+*.ear
+*.nar
+
+# --------------------------
+# Maven
+# --------------------------
+target/
+pom.xml.tag
+pom.xml.releaseBackup
+pom.xml.versionsBackup
+pom.xml.next
+release.properties
+dependency-reduced-pom.xml
+
+# --------------------------
+# Gradle
+# --------------------------
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# --------------------------
+# IntelliJ IDEA
+# --------------------------
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+
+# --------------------------
+# Eclipse
+# --------------------------
+.project
+.classpath
+.settings/
+bin/
+
+# --------------------------
+# VS Code
+# --------------------------
+.vscode/
+
+# --------------------------
+# NetBeans
+# --------------------------
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+
+# --------------------------
+# OS files
+# --------------------------
+.DS_Store
+Thumbs.db
+
+# --------------------------
+# Temporary files
+# --------------------------
+*.tmp
+*.temp
+*.swp
+*.swo
+
+# --------------------------
+# Environment / secrets
+# --------------------------
+.env
+.env.*
+*.local
+
+# --------------------------
+# Test / coverage reports
+# --------------------------
+coverage/
+*.exec
+jacoco.exec
+
+# --------------------------
+# Spring Boot
+# --------------------------
+application-local.properties
+application-local.yml
+application-dev.properties
+application-dev.yml
+
+# --------------------------
+# Generated files
+# --------------------------
+generated/
+
+# --------------------------
+# AI / Agent tools - local state / cache / scratch
+# --------------------------
+.cursor/
+.claude/
+.codex/
+.opencode/
+.qodo/
+.qoder/
+.lingma/
+.windsurf/
+.gemini/
+.aider*
+.repomix-output.*
+.omx/
+
+# Local AI scratch files
+*.local.md
+*.prompt.local
+*.prompts.local
+ai-output/
+agent-output/
+
+# MCP local config / secrets
+.mcp.json
+mcp.json
+.mcp/
+
+# Optional: ignore local overrides, but keep team rules
+CLAUDE.local.md
+AGENTS.local.md
+.cursor/rules/local/
