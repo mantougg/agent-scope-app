@@ -932,7 +932,7 @@ ReActAgent agent = ReActAgent.builder()
 
 ## 文档
 - 学习路线：`docs/learning.md`
-- Day 1：`docs/lessons/day-01.md`
+- Day 1：`docs/lessons/Day01_项目骨架 + AS-Java Hello World.md`
 - AS-Java 笔记：`docs/agents/`
 ```
 
@@ -948,7 +948,7 @@ git commit -m "day1: bootstrap project skeleton & hello-world agent (Volcengine 
 
 ### 9.3 收工日记（≤ 5 分钟）
 
-在 `docs/lessons/day-01.md` 末尾的"我的笔记"区写下：
+在 `docs/lessons/Day01_项目骨架 + AS-Java Hello World.md` 末尾的"我的笔记"区写下：
 - 今天最坑的 1 个错
 - 最有 aha 时刻的 1 个点
 - Day 2 之前想搞清楚的 1 个问题
@@ -957,13 +957,13 @@ git commit -m "day1: bootstrap project skeleton & hello-world agent (Volcengine 
 
 ## 10. 当日完整验收清单（对照 learning.md）
 
-- [ ] **Phase 0** 环境齐全，`ARK_API_KEY` 可用，curl 自检通过
-- [ ] **Phase 1** `pom.xml` + 目录结构 + `mvn test` 全绿
-- [ ] **Phase 2** `logback.xml`（含 UTF-8 charset） + `application.conf` + `AppConfig` 工作
-- [ ] **Phase 3** `mvn exec:java` 能拿到 LLM 同步回复
-- [ ] **Phase 4** 流式 + REPL 多轮通过
-- [ ] **Phase 5** 至少做了 1 个拓展（可选）
-- [ ] **Phase 6** README + git commit + 当日笔记
+- [x] **Phase 0** 环境齐全，`ARK_API_KEY` 可用，curl 自检通过
+- [x] **Phase 1** `pom.xml` + 目录结构 + `mvn test` 全绿
+- [x] **Phase 2** `logback.xml`（含 UTF-8 charset） + `application.conf` + `AppConfig` 工作
+- [x] **Phase 3** `mvn exec:java` 能拿到 LLM 同步回复
+- [x] **Phase 4** 流式 + REPL 多轮通过
+- [x] **Phase 5** 至少做了 1 个拓展（可选）
+- [x] **Phase 6** README + git commit + 当日笔记
 
 ---
 

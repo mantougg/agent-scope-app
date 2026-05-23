@@ -64,7 +64,7 @@
 
 ## Day 1 · 项目骨架 + AS-Java Hello World
 
-> 📘 **详细课程**：[lessons/day-01.md](./lessons/day-01.md) — 6 个 Phase 时间盒 + 完整可拷贝代码 + 故障排查表
+> 📘 **详细课程**：[lessons/Day01_项目骨架 + AS-Java Hello World.md](<./lessons/Day01_项目骨架 + AS-Java Hello World.md>) — 6 个 Phase 时间盒 + 完整可拷贝代码 + 故障排查表
 
 ### 学习目标
 
