@@ -14,6 +14,7 @@
     <properties>
         <maven.compiler.source>17</maven.compiler.source>
         <maven.compiler.target>17</maven.compiler.target>
+        <maven.compiler.release>17</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <agentscope.version>1.0.12</agentscope.version>
         <exec.mainClass>space.wlshow.scope.ScopeApp</exec.mainClass>
@@ -46,6 +47,14 @@
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
             <version>5.10.2</version>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- WireMock：模拟 LLM API，离线跑测试 -->
+        <dependency>
+            <groupId>org.wiremock</groupId>
+            <artifactId>wiremock-standalone</artifactId>
+            <version>3.5.4</version>
             <scope>test</scope>
         </dependency>
     </dependencies>

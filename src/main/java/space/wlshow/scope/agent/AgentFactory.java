@@ -1,12 +1,15 @@
 package space.wlshow.scope.agent;
 
 import space.wlshow.scope.config.AppConfig;
+import space.wlshow.scope.hook.PromptLengthHook;
 import space.wlshow.scope.model.ModelRegistry;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.model.Model;
 import io.agentscope.core.model.OpenAIChatModel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import java.util.List;
 
 public final class AgentFactory {
 
@@ -49,6 +52,7 @@ public final class AgentFactory {
                 .sysPrompt(AppConfig.sysPrompt())
                 .model(model)
                 .maxIters(AppConfig.maxIters())
+                .hooks(List.of(new PromptLengthHook()))
                 .build();
     }
 
