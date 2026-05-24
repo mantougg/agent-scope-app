@@ -224,6 +224,8 @@
 
 ## Day 2 · 数据契约 + JSON Schema 校验
 
+> 📘 **详细课程**：[lessons/Day02_数据契约 + JSON Schema 校验.md](<./lessons/Day02_数据契约 + JSON Schema 校验.md>) — 6 个 Phase 时间盒 + 完整可拷贝代码 + 故障表 + 附录
+
 ### 学习目标
 
 - 把需求 #11、#12、#13 的三个 JSON 形态固化为 Java POJO

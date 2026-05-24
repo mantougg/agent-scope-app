@@ -91,6 +91,7 @@ mvn -U dependency:resolve
 |------|------|
 | `docs/learning.md` | 7 天总路线图，每天的学习目标、产出、风险 |
 | `docs/lessons/Day01_项目骨架 + AS-Java Hello World.md` | Day 1 完整课程（6 个 Phase，含可拷贝代码 + 故障表 + 附录） |
+| `docs/lessons/Day02_数据契约 + JSON Schema 校验.md` | Day 2 完整课程：POJO record + JSON Schema 2020-12 + networknt 校验器 |
 | `docs/agents/` | AS-Java 框架笔记 11 篇：overview / core-concepts / react-agent / tool-system / model-providers / memory-state-session / harness / multi-agent / integration / observability-hitl / vs-python |
 
 **回答"如何用 AS-Java 做 X"类问题时，先查 `docs/agents/` 对应章节**，不要凭空回答。
@@ -112,7 +113,7 @@ Day[两位数序号]_[文章标题].md
 | 课程 | 文件名 |
 |------|--------|
 | Day 1 | `Day01_项目骨架 + AS-Java Hello World.md` |
-| Day 2 | `Day02_数据契约 + JSON Schema 校验.md`（计划） |
+| Day 2 | `Day02_数据契约 + JSON Schema 校验.md` |
 | Day 3 | `Day03_需求解析 + Structured Output.md`（计划） |
 
 新建课程文档时同步在 `docs/learning.md` 路线图、`README.md` 文档导航、本文件第 9 节表格里加引用。Markdown 链接因含空格，建议用 `[文本](<带空格的路径.md>)` 角括号形式或将空格转义为 `%20`。

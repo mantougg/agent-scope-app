@@ -3,7 +3,7 @@
 > 基于 **AgentScope-Java** + **火山引擎方舟（Volcengine Ark）** 的需求分析智能体学习项目。
 > 7 天内从零搭建一个能把中文需求拆解为「应用 / 模块 / 数据模型」的 ReAct Agent。
 
-当前进度：**Day 1**（项目骨架 + REPL Hello World 已通）。详见 [docs/learning.md](docs/learning.md) 的路线图。
+当前进度：**Day 2**（数据契约 + JSON Schema 校验 课程文档已就位，待落地）。详见 [docs/learning.md](docs/learning.md) 的路线图。
 
 ---
 
@@ -133,6 +133,7 @@ agent {
 |------|------|
 | [docs/learning.md](docs/learning.md) | 7 天完整学习路线（Day 1 ~ Day 7） |
 | [Day01 课程文档](<docs/lessons/Day01_项目骨架 + AS-Java Hello World.md>) | Day 1 详细课程：环境、Maven、日志、配置、REPL、流式 |
+| [Day02 课程文档](<docs/lessons/Day02_数据契约 + JSON Schema 校验.md>) | Day 2 详细课程：POJO record、JSON Schema 2020-12、networknt 校验器 |
 | [docs/agents/](docs/agents/) | AS-Java 框架笔记：Agent / Memory / Tool / Model / Harness 等 |
 | [CLAUDE.md](CLAUDE.md) | Claude Code 在本仓库内的工程约定 |
 | [AGENTS.md](AGENTS.md) | 通用 AI Agent 工程指引（Codex / Cursor 等） |
