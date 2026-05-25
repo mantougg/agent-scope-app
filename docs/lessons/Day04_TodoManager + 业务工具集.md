@@ -487,10 +487,10 @@ import io.agentscope.core.tool.Tool;
 import io.agentscope.core.tool.ToolParam;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import space.wlshow.scope.model.AppSpec;
-import space.wlshow.scope.model.DataModelSpec;
-import space.wlshow.scope.model.FieldSpec;
-import space.wlshow.scope.model.ModuleSpec;
+import space.wlshow.scope.spec.AppSpec;
+import space.wlshow.scope.spec.DataModelSpec;
+import space.wlshow.scope.spec.FieldSpec;
+import space.wlshow.scope.spec.ModuleSpec;
 import space.wlshow.scope.todo.TodoItem;
 import space.wlshow.scope.todo.TodoManager;
 import space.wlshow.scope.todo.TodoType;
@@ -716,9 +716,9 @@ public static String analystWithTools() {
 TodoManager todos = new TodoManager();
 ReActAgent analyst = AgentFactory.buildAnalystWithTools(todos);
 
-// REPL 循环里
-} else if (input.startsWith("/run ")) {
-    String req = input.substring("/run ".length()).trim();
+// REPL 循环里（line 是 Day 1 REPL 里读到的一行）
+} else if (line.startsWith("/run ")) {
+    String req = line.substring("/run ".length()).trim();
     Msg out = analyst.call(Msg.builder()
             .role(MsgRole.USER)
             .content(TextBlock.builder().text(req).build())
@@ -729,6 +729,7 @@ ReActAgent analyst = AgentFactory.buildAnalystWithTools(todos);
     System.out.println("=== Todos (" + todos.size() + ") ===");
     todos.snapshot().forEach(it -> System.out.printf("  %s  %-15s  %-25s  %s%n",
             it.id(), it.type(), it.targetName(), it.status()));
+    continue;
 }
 ```
 
@@ -799,7 +800,10 @@ public String createApp(... 参数 ...) {
     AppSpec spec = new AppSpec(name, label, type);
     JsonNode payload = Json.mapper().valueToTree(spec);
 
-    List<String> errors = APP_VAL.validate(payload);
+    // SchemaValidator.validate 返回 List<ValidationError>，拼中文 message 给 LLM
+    List<String> errors = APP_VAL.validate(payload).stream()
+            .map(ValidationError::message)
+            .toList();
     if (!errors.isEmpty()) {
         log.warn("[Tool] create_app rejected: {}", errors);
         return "ERROR: 参数不合规：" + String.join("; ", errors);

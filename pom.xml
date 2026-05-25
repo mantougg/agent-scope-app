@@ -91,6 +91,7 @@
                 <version>3.2.5</version>
                 <configuration>
                     <argLine>-Dfile.encoding=UTF-8</argLine>
+                    <excludedGroups>live</excludedGroups>
                 </configuration>
             </plugin>
             <!-- 让 mvn exec:java 直接跑 main -->

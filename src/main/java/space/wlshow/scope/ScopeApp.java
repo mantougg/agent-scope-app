@@ -6,7 +6,12 @@ import io.agentscope.core.ReActAgent;
 import io.agentscope.core.message.Msg;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import space.wlshow.scope.agent.ParseException;
+import space.wlshow.scope.agent.RequirementParser;
 import space.wlshow.scope.config.AppConfig;
+import space.wlshow.scope.schema.SchemaValidator;
+import space.wlshow.scope.spec.AnalysisResult;
+import space.wlshow.scope.util.Json;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Scanner;
@@ -14,6 +19,10 @@ import java.util.Scanner;
 public class ScopeApp {
 
     private static final Logger log = LoggerFactory.getLogger(ScopeApp.class);
+
+    static ReActAgent parserAgent = AgentFactory.buildParser();
+    static SchemaValidator validator = new SchemaValidator("/schemas/analysis-result.schema.json");
+    static RequirementParser parser = new RequirementParser(parserAgent, validator);
 
     public static void main(String[] args) {
         log.info("Booting Scope App (REPL model) ...");
@@ -30,6 +39,21 @@ public class ScopeApp {
             if (line.isEmpty()) continue;
             if ("exit".equalsIgnoreCase(line)) break;
             if ("/stream".equals(line)) { stream = !stream; continue; }
+            if (line.startsWith("/parse ")) {
+                String req = line.substring("/parse ".length()).trim();
+                if (req.isEmpty()) {
+                    System.out.println("用法：/parse <中文需求>");
+                    continue;
+                }
+                try {
+                    AnalysisResult result = parser.parse(req);
+                    System.out.println("[PARSED]\n" + Json.writePretty(result));
+                } catch (ParseException e) {
+                    System.out.println("[PARSE-FAIL] " + e.getMessage());
+                    e.lastErrors().forEach(err -> System.out.println("  - " + err));
+                }
+                continue;
+            }
 
             log.info("[USER] {}", line);
             Msg req = Msg.builder().textContent(line).build();

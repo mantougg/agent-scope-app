@@ -287,8 +287,7 @@ mvn -q spring-boot:run
 package space.wlshow.scope.config;
 
 import io.agentscope.agui.spring.AguiAgentRegistryCustomizer;
-import io.agentscope.core.agent.Agent;
-import io.agentscope.core.agent.ReActAgent;
+import io.agentscope.core.ReActAgent;
 import io.agentscope.core.memory.InMemoryMemory;
 import io.agentscope.core.memory.Memory;
 import io.agentscope.core.tool.Toolkit;

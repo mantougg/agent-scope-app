@@ -8,6 +8,7 @@ import io.agentscope.core.model.Model;
 import io.agentscope.core.model.OpenAIChatModel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import space.wlshow.scope.util.Prompts;
 
 import java.util.List;
 
@@ -53,6 +54,22 @@ public final class AgentFactory {
                 .model(model)
                 .maxIters(AppConfig.maxIters())
                 .hooks(List.of(new PromptLengthHook()))
+                .build();
+    }
+
+    /**
+     * 构造"需求解析"专用 Agent：
+     * - 强制 system prompt
+     * - 关闭 tool（Day 3 还不接 Toolkit）
+     * - 关闭 stream（Day 3 要拿完整 JSON 一次解析）
+     */
+    public static ReActAgent buildParser() {
+        initModels();
+        return ReActAgent.builder()
+                .name("RequirementAnalyst")
+                .sysPrompt(Prompts.analyst())
+                .model(ModelRegistry.resolve(DEFAULT_MODEL_ID))
+                .maxIters(2)             // 解析任务一次性回答，不需要多步推理
                 .build();
     }
 

@@ -163,6 +163,7 @@ agent-scope-app/
   <properties>
     <maven.compiler.source>17</maven.compiler.source>
     <maven.compiler.target>17</maven.compiler.target>
+    <maven.compiler.release>17</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <agentscope.version>1.0.12</agentscope.version>
     <!-- 默认 main class；命令行用 -Dexec.mainClass=... 可临时覆盖 -->
@@ -645,9 +646,8 @@ public class ScopeApp {
 
         String reply = response.getTextContent();
         System.out.println("\n>>> " + reply + "\n");
-        log.info("[BOT] reason={}, tokens={}, content={}",
+        log.info("[BOT] reason={} text={}",
             response.getGenerateReason(),
-            response.getChatUsage(),
             reply);
     }
 }
@@ -687,7 +687,6 @@ ARK_API_KEY='apikey-xxxxxxxx' mvn -q compile exec:java
 
 - [ ] 终端能看到 LLM 中文回复
 - [ ] `getGenerateReason()` == `MODEL_STOP`
-- [ ] `getChatUsage()` 显示 token 数 > 0
 - [ ] 日志里至少有 `[USER]` `[BOT]` 各一条
 
 ### 🚨 常见错误
@@ -717,7 +716,6 @@ import space.wlshow.scope.agent.AgentFactory;
 import space.wlshow.scope.config.AppConfig;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.message.Msg;
-import io.agentscope.core.message.TextBlock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -777,14 +775,14 @@ public class ScopeApp {
         agent.stream(req)
             .timeout(AppConfig.timeout())
             .toStream()                                  // Flux → Java Stream（阻塞）
-            .forEach(msg -> {
-                msg.getContentBlocks(TextBlock.class)
-                   .forEach(b -> {
-                       String delta = b.getText();
-                       buf.append(delta);
-                       System.out.print(delta);
-                       System.out.flush();
-                   });
+            .forEach(chunk -> {
+                // 流式调用每个 chunk 是 AgentResponse，需 .getMessage() 拿到 Msg
+                String delta = chunk.getMessage().getTextContent();
+                if (delta != null && !delta.isEmpty()) {
+                    buf.append(delta);
+                    System.out.print(delta);
+                    System.out.flush();
+                }
             });
         System.out.println();
         log.info("[BOT-STREAM] text={}", buf);

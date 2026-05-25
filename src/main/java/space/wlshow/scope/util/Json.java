@@ -66,5 +66,33 @@ public final class Json {
         }
     }
 
+    /**
+     * 剥离 Markdown 代码 fence 包裹的 JSON。容错：
+     * - ```json\n{...}\n```
+     * - ```\n{...}\n```
+     * - 前后有寒暄文字
+     * - 没有 fence 直接返回
+     */
+    public static String stripFence(String raw) {
+        if (raw == null) return "";
+        String s = raw.trim();
+        // 优先：找到第一段 fence
+        int fenceStart = s.indexOf("```");
+        if (fenceStart >= 0) {
+            int contentStart = s.indexOf('\n', fenceStart);
+            int fenceEnd = s.lastIndexOf("```");
+            if (contentStart > 0 && fenceEnd > contentStart) {
+                return s.substring(contentStart + 1, fenceEnd).trim();
+            }
+        }
+        // 兜底：截取第一个 { 到最后一个 }
+        int objStart = s.indexOf('{');
+        int objEnd = s.lastIndexOf('}');
+        if (objStart >= 0 && objEnd > objStart) {
+            return s.substring(objStart, objEnd + 1);
+        }
+        return s;
+    }
+
     private Json() {}
 }

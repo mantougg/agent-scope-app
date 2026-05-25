@@ -1,0 +1,15 @@
+{
+  "id": "chatcmpl-xxx",
+  "object": "chat.completion",
+  "created": 1736000000,
+  "model": "doubao-pro",
+  "choices": [{
+    "index": 0,
+    "finish_reason": "stop",
+    "message": {
+      "role": "assistant",
+      "content": "{\"app\":{\"name\":\"employeeMgr\",\"label\":\"员工档案管理\",\"type\":\"23\"},\"modules\":[{\"moduleName\":\"员工管理\",\"moduleId\":\"employeeMgmt\",\"moduleDesc\":\"维护员工档案\"}],\"models\":[{\"name\":\"employee\",\"type\":\"ENTITY\",\"pinyin\":\"yuangong\",\"tableName\":\"t_employee\",\"parentId\":\"\",\"fields\":[{\"comment\":\"主键\",\"name\":\"id\",\"dataType\":\"long\",\"usage\":\"primary\",\"relateModelType\":\"\",\"subs\":null}]}],\"warnings\":[],\"questions\":[]}"
+    }
+  }],
+  "usage": { "prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150 }
+}

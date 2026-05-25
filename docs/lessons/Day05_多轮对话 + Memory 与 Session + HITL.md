@@ -254,7 +254,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.agentscope.core.tool.Tool;
 import io.agentscope.core.tool.ToolParam;
-import space.wlshow.scope.model.FieldSpec;
+import space.wlshow.scope.spec.FieldSpec;
 import space.wlshow.scope.todo.TodoItem;
 import space.wlshow.scope.todo.TodoManager;
 import space.wlshow.scope.todo.TodoStatus;
@@ -494,11 +494,12 @@ mvn -q compile exec:java
 > 📌 加一个 `/todos` 命令方便不调 LLM 直接看：
 
 ```java
-} else if (input.equals("/todos")) {
+} else if (line.equals("/todos")) {
     System.out.println("=== Todos (" + session.todos.size() + ") ===");
     session.todos.snapshot().forEach(it ->
         System.out.printf("  %s  %-15s  %-25s  %s%n",
             it.id(), it.type(), it.targetName(), it.status()));
+    continue;
 }
 ```
 
@@ -602,8 +603,9 @@ public class SubmitTool {
 ### 8.1 REPL `/submit` 命令
 
 ```java
-} else if (input.equals("/submit")) {
+} else if (line.equals("/submit")) {
     runSubmit(analyst, session);
+    continue;
 }
 ```
 
@@ -824,16 +826,19 @@ AS-Java 1.0.x 系列里 `JsonSession` 的字段命名和 `StateModule` 接口在
 
 ## 12. 附录 B · `ToolSuspend` 替代方案：Hook 拦截
 
-如果你的 AS-Java 版本 ToolSuspend 不好使，可以用 `PreActingHook` 拦截 `submit_to_frontend` 工具调用：
+如果你的 AS-Java 版本 ToolSuspend 不好使，可以用 Hook 拦截 `submit_to_frontend` 工具调用：
 
 ```java
-public class SubmitConfirmHook implements PreActingHook {
+// 注意：1.0.12 实际是单一 Hook 接口 + onEvent(HookEvent) 分派
+// （见仓库 PromptLengthHook 的写法）。下面是示意伪码，
+// 真做时请按 jar 里 Hook / HookEvent / ToolCall 相关事件实际签名替换。
+public class SubmitConfirmHook implements Hook {
     @Override
-    public Mono<Void> onBefore(ToolCallEvent event) {
-        if ("submit_to_frontend".equals(event.toolName())) {
-            // 弹 CLI 询问，拒绝时通过 event.cancel(reason) 阻止真正调用
-        }
-        return Mono.empty();
+    public <T extends HookEvent> Mono<T> onEvent(T event) {
+        // if (event instanceof PreActingEvent e && "submit_to_frontend".equals(e.getToolName())) {
+        //     弹 CLI 询问，拒绝时通过 e.cancel(reason) 阻止真正调用
+        // }
+        return Mono.just(event);
     }
 }
 ```
