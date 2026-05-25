@@ -99,6 +99,23 @@
 
 > 📌 `jsr310` 现在不用，但 Day 4 的 `TodoItem` 会需要 `Instant`，提前装好省一次依赖切换。
 
+### 4.1.1 给 Surefire 加 UTF-8 启动参数（Windows 必做）
+
+`pom.xml` 的 `<build><plugins>` 段里，找到 `maven-surefire-plugin`，加一段 `<configuration>`：
+
+```xml
+<plugin>
+    <groupId>org.apache.maven.plugins</groupId>
+    <artifactId>maven-surefire-plugin</artifactId>
+    <version>3.2.5</version>
+    <configuration>
+        <argLine>-Dfile.encoding=UTF-8</argLine>
+    </configuration>
+</plugin>
+```
+
+**为什么**：今天大量断言、错误消息会包含中文（如 `"应通过但失败了：..."`、`"%s 缺少必填字段"`）。Windows 默认 JVM 编码是 GBK，跑 `mvn test` 时如果断言失败，控制台输出的中文会乱码、`assertTrue(text.contains("中文"))` 也可能在某些路径下出错。强制 Surefire fork 出的 JVM 用 UTF-8 一劳永逸。Linux/macOS 默认就是 UTF-8 不会踩，但加上不影响。
+
 跑一下确保拉到：
 
 ```bash
@@ -193,6 +210,7 @@ public final class Json {
 ### ✅ Phase 1 验收
 
 - [ ] `pom.xml` 多了 3 个 dependency，且 `mvn -U dependency:resolve` 无错
+- [ ] `pom.xml` 的 `maven-surefire-plugin` 配了 `<argLine>-Dfile.encoding=UTF-8</argLine>`
 - [ ] `Json.java` 编译通过
 - [ ] 在 IDE 里写一行临时测试 `Json.write(Map.of("hello","世界"))` 能得到 `{"hello":"世界"}`（中文不乱码）
 
@@ -558,7 +576,7 @@ import com.networknt.schema.ValidationMessage;
 /**
  * 校验错误的中文友好封装。
  *
- * @param path      JSON Pointer，如 "$.models[0].fields[1].dataType"
+ * @param path      JSON Pointer，如 "/models/0/fields/1/dataType"
  * @param keyword   触发的关键字（type/enum/required/pattern/additionalProperties/...）
  * @param message   中文描述
  * @param raw       networknt 原始消息（保留兜底）
@@ -567,7 +585,7 @@ public record ValidationError(String path, String keyword, String message, Strin
 
     public static ValidationError from(ValidationMessage m) {
         String path = m.getInstanceLocation() == null
-                ? m.getPath()
+                ? (m.getEvaluationPath() == null ? "$" : m.getEvaluationPath().toString())
                 : m.getInstanceLocation().toString();
         String keyword = m.getType();
         String zh = translate(m);
@@ -576,7 +594,9 @@ public record ValidationError(String path, String keyword, String message, Strin
 
     private static String translate(ValidationMessage m) {
         String kw   = m.getType();
-        String path = m.getPath() == null ? "?" : m.getPath();
+        String path = m.getInstanceLocation() == null
+                ? (m.getEvaluationPath() == null ? "?" : m.getEvaluationPath().toString())
+                : m.getInstanceLocation().toString();
         Object[] args = m.getArguments() == null ? new Object[0] : m.getArguments();
 
         return switch (kw) {
@@ -605,7 +625,7 @@ public record ValidationError(String path, String keyword, String message, Strin
 }
 ```
 
-> 📌 networknt 1.4.0 同时提供 `getPath()`（带 `$.` 前缀的 instance pointer）和 `getInstanceLocation()`（JSON Pointer 对象）。这里两个都拿，是因为不同版本 / 不同关键字的填法不一样，做防御。
+> 📌 networknt 1.4.0 没有 `getPath()`——它提供 `getInstanceLocation()`（JSON Pointer 对象，指向**数据**中出错的位置，比如 `/models/0/fields/1/dataType`）和 `getEvaluationPath()`（指向**Schema**中触发关键字的位置，比如 `/$defs/FieldSpec/properties/dataType/enum`）。我们想给用户看的是数据路径，所以优先用 `getInstanceLocation()`，缺失时兜底到 `getEvaluationPath()`。**测试断言要用 `/` 分隔的 JSON Pointer 写法**（`e.path().contains("moduleId")` 这种 `contains` 检查不受影响）。
 
 ### 7.2 `SchemaValidator.java`
 
@@ -1025,15 +1045,18 @@ git commit -m "day2: 数据契约 + JSON Schema 校验"
 | `$ref` | 引用 | `"#/$defs/FieldSpec"` |
 | `oneOf` | 多形态之一 | `FieldSpec.subs`（null 或 array） |
 
-### A.2 networknt `ValidationMessage` 关键 API
+### A.2 networknt `ValidationMessage` 关键 API（1.4.0）
 
 ```java
-m.getType()              // "enum"、"required"、"pattern" ...
-m.getPath()              // "$.models[0].fields[1].dataType"
-m.getInstanceLocation()  // JsonNodePath 对象（部分版本提供）
-m.getArguments()         // 关键字相关的额外参数，比如枚举的 allowed values
-m.getMessage()           // 默认英文消息
+m.getType()              // 关键字名："enum"、"required"、"pattern" ...
+m.getInstanceLocation()  // JsonNodePath：数据中出错的位置，如 "/models/0/fields/1/dataType"
+m.getEvaluationPath()    // JsonNodePath：Schema 中触发关键字的位置，如 "/$defs/FieldSpec/properties/dataType/enum"
+m.getSchemaLocation()    // SchemaLocation：触发关键字的 Schema 绝对位置（含 $id）
+m.getArguments()         // 关键字相关的额外参数，比如 enum 的 allowed values
+m.getMessage()           // 默认英文消息（如 "$.x.y: must be one of [...]"）
 ```
+
+> ⚠️ 老资料里常出现的 `m.getPath()` 在 1.4.0 已被拆成 `getInstanceLocation()` / `getEvaluationPath()`。给用户看 JSON 路径用前者，给 Schema 开发者定位规则用后者。
 
 ### A.3 把 LLM 的 JSON 拿来校验（Day 3 会用）
 
@@ -1058,7 +1081,7 @@ if (errs.isEmpty()) {
 | `JsonSchemaException: $ref ... cannot be resolved` | `$ref` 写错 | 必须 `"#/$defs/Xxx"`，不能省 `#/` |
 | `Cannot construct instance of FieldSpec ... no Creators` | Jackson < 2.12 | 锁版本 2.17.0，或检查依赖树是否被某传递依赖压成 2.10 |
 | `UnrecognizedPropertyException` | `Json` 忘了 `FAIL_ON_UNKNOWN_PROPERTIES=false` | 见 §4.2 |
-| `ValidationMessage.getPath()` 是 `$` 空路径 | networknt 在顶层错误时只返回 `$` | 那就是顶层错（如 `required: app`），不是 bug |
+| `ValidationMessage.getInstanceLocation()` 是空 `""` 路径 | networknt 在顶层错误时返回根 pointer | 那就是顶层错（如 `required: app`），不是 bug |
 | 递归 schema 校验慢 | 嵌套 + `additionalProperties:false` 双重叠加 | Day 2 范围内可忽略；Day 7 性能优化时再说 |
 | 中文错误消息乱码 | logback / 控制台编码问题 | 见 [Day01 附录 B-2](<Day01_项目骨架 + AS-Java Hello World.md>) |
 | `mvn test` 报 ` Surefire ... 模块路径` 错 | Surefire 与 JDK 17 模块系统冲突 | `pom.xml` 已锁 Surefire 3.2.5，一般不会遇到。遇到加 `--add-opens` |

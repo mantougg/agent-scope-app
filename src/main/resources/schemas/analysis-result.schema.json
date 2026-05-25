@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wlshow.space/scope/analysis-result.schema.json",
+  "title": "AnalysisResult",
+  "description": "需求分析智能体的完整输出契约",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["app", "modules", "models", "warnings", "questions"],
+  "properties": {
+    "app":       { "$ref": "#/$defs/AppSpec" },
+    "modules":   { "type": "array", "items": { "$ref": "#/$defs/ModuleSpec" } },
+    "models":    { "type": "array", "items": { "$ref": "#/$defs/DataModelSpec" } },
+    "warnings":  { "type": "array", "items": { "type": "string" } },
+    "questions": { "type": "array", "items": { "type": "string" } }
+  },
+
+  "$defs": {
+    "AppSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "label", "type"],
+      "properties": {
+        "name":  { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9]*$" },
+        "label": { "type": "string", "minLength": 1 },
+        "type":  { "type": "string", "minLength": 1 }
+      }
+    },
+
+    "ModuleSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["moduleName", "moduleId", "moduleDesc"],
+      "properties": {
+        "moduleName": { "type": "string", "minLength": 1 },
+        "moduleId":   { "type": "string", "pattern": "^[a-z][a-zA-Z0-9]*$" },
+        "moduleDesc": { "type": "string" }
+      }
+    },
+
+    "DataModelSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "type", "pinyin", "tableName", "parentId", "fields"],
+      "properties": {
+        "name":      { "type": "string", "minLength": 1 },
+        "type":      { "enum": ["TASK_MASTER_SLAVE", "TASK", "ENTITY"] },
+        "pinyin":    { "type": "string", "pattern": "^[a-z]+$" },
+        "tableName": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+        "parentId":  { "type": "string" },
+        "fields":    { "type": "array", "items": { "$ref": "#/$defs/FieldSpec" }, "minItems": 1 }
+      }
+    },
+
+    "FieldSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "dataType"],
+      "properties": {
+        "comment":         { "type": ["string", "null"] },
+        "name":            { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" },
+        "dataType":        { "enum": ["long", "int", "double", "string", "boolean", "date", "array"] },
+        "usage":           { "type": ["string", "null"] },
+        "relateModelType": { "type": ["string", "null"] },
+        "subs": {
+          "oneOf": [
+            { "type": "null" },
+            { "type": "array", "items": { "$ref": "#/$defs/FieldSpec" } }
+          ]
+        }
+      }
+    }
+  }
+}

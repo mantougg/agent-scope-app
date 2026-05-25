@@ -27,8 +27,22 @@ class WireMockAgentTest {
         wireMock = new WireMockServer(
                 WireMockConfiguration.wireMockConfig().dynamicPort());
         wireMock.start();
+    }
 
-        // Mock 非流式 /chat/completions 接口
+    @AfterAll
+    static void stopWireMock() {
+        if (wireMock != null) {
+            wireMock.stop();
+        }
+    }
+
+    @BeforeEach
+    void resetStubs() {
+        // 清空上一个测试方法注册的所有 stub 和 scenario 状态，
+        // 避免类似 multi-turn scenario 的 "turn2" 状态污染后续测试。
+        wireMock.resetAll();
+
+        // 默认 stub：非流式 /chat/completions，返回固定 mock 内容
         wireMock.stubFor(post(urlPathMatching("/api/v3/chat/completions"))
                 .willReturn(aResponse()
                         .withStatus(200)
@@ -58,13 +72,6 @@ class WireMockAgentTest {
                                 """)));
     }
 
-    @AfterAll
-    static void stopWireMock() {
-        if (wireMock != null) {
-            wireMock.stop();
-        }
-    }
-
     @Test
     @DisplayName("同步调用：Agent 能通过 mock 接口拿到回复")
     void syncCall_shouldReturnMockedReply() {
@@ -73,6 +80,7 @@ class WireMockAgentTest {
                 .apiKey("fake-key-for-test")
                 .modelName("test-model")
                 .baseUrl(wireMock.baseUrl() + "/api/v3")
+                .stream(false)  // WireMock stub 是非流式响应，必须禁用 stream
                 .build();
 
         ReActAgent agent = ReActAgent.builder()
@@ -149,6 +157,7 @@ class WireMockAgentTest {
                 .apiKey("fake-key")
                 .modelName("test-model")
                 .baseUrl(wireMock.baseUrl() + "/api/v3")
+                .stream(false)  // WireMock stub 是非流式响应，必须禁用 stream
                 .build();
 
         ReActAgent agent = ReActAgent.builder()

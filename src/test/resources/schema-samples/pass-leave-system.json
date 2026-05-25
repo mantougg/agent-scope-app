@@ -1,0 +1,41 @@
+{
+  "app": {
+    "name": "leaveSystem",
+    "label": "请假管理",
+    "type": "23"
+  },
+  "modules": [
+    { "moduleName": "请假申请", "moduleId": "leaveRequest", "moduleDesc": "员工发起请假" },
+    { "moduleName": "审批管理", "moduleId": "leaveApproval", "moduleDesc": "主管审批请假" }
+  ],
+  "models": [
+    {
+      "name": "请假单",
+      "type": "TASK_MASTER_SLAVE",
+      "pinyin": "qingjiadan",
+      "tableName": "t_leave_request",
+      "parentId": "",
+      "fields": [
+        { "comment": "主键", "name": "id", "dataType": "long", "usage": "primary", "relateModelType": "", "subs": null },
+        { "comment": "申请人", "name": "applicantId", "dataType": "long", "usage": "foreign", "relateModelType": "", "subs": null },
+        { "comment": "明细", "name": "details", "dataType": "array", "usage": "", "relateModelType": "collection", "subs": [
+          { "comment": "天数", "name": "days", "dataType": "double", "usage": "", "relateModelType": "", "subs": null },
+          { "comment": "类型", "name": "kind", "dataType": "string", "usage": "", "relateModelType": "", "subs": null }
+        ]}
+      ]
+    },
+    {
+      "name": "审批记录",
+      "type": "TASK",
+      "pinyin": "shenpijilu",
+      "tableName": "t_leave_approval",
+      "parentId": "",
+      "fields": [
+        { "comment": "主键", "name": "id", "dataType": "long", "usage": "primary", "relateModelType": "", "subs": null },
+        { "comment": "审批意见", "name": "remark", "dataType": "string", "usage": "", "relateModelType": "", "subs": null }
+      ]
+    }
+  ],
+  "warnings": [],
+  "questions": ["请假明细是否需要附件字段？"]
+}

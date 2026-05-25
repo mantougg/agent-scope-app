@@ -1,0 +1,18 @@
+{
+  "app": { "name": "x", "label": "X", "type": "23" },
+  "modules": [
+    { "moduleName": "M", "moduleId": "m", "moduleDesc": "" }
+  ],
+  "models": [
+    { "name": "M", "type": "TASK_MASTER_SLAVE", "pinyin": "m", "tableName": "t_m", "parentId": "",
+      "fields": [
+        { "name": "id", "dataType": "long", "comment": "主键", "usage": "primary", "relateModelType": "", "subs": null },
+        { "name": "details", "dataType": "array", "comment": "明细", "usage": "", "relateModelType": "collection", "subs": [
+          { "name": "days", "dataType": "JSON", "comment": "天数", "usage": "", "relateModelType": "", "subs": null }
+        ]}
+      ]
+    }
+  ],
+  "warnings": [],
+  "questions": []
+}
