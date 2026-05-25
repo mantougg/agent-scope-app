@@ -888,22 +888,188 @@ git commit -m "day3: 需求解析 + Structured Output
 
 ---
 
-## 12. 附录 B · 为什么 Day 3 不直接用 Structured Output API
+## 12. 附录 B · 为什么 Day 3 不直接用 `response_format` API
 
-OpenAI 兼容协议（包括火山方舟）有两条 structured 路径：
+OpenAI 兼容协议有两类"在 API 层保证结构"的能力，**别混淆**：
 
-1. `response_format: { "type": "json_object" }` — **只保证返回是 JSON**，不保证字段
-2. `response_format: { "type": "json_schema", "json_schema": {...} }` — **保证符合给定 schema**
+| 路径 | 字段 | provider 兼容性 | 本课立场 |
+|------|------|----------------|---------|
+| **A** | `response_format: {"type":"json_object"}` | 大部分支持 | 只保证返回是 JSON，**不保证字段**，跟方案 A 的"自己反序列化 + 校验"没本质区别 |
+| **B** | `response_format: {"type":"json_schema", ...}` | 火山方舟 / DashScope 不同模型表现参差 | 看起来强但赌 provider 行为，**不推荐** |
+| **C** | `tool_choice: Specific("xxx")` | OpenAI / Anthropic / 火山方舟 / DashScope 都通用 | 行业标准 function-calling 路径，**推荐**，见附录 C |
 
-第 2 条在火山方舟、DashScope 支持度不稳定（不同模型版本表现不同），而且**绕过它我们也能拿到同样的结果**（重试 + schema 校验）。
+Day 3 主线（方案 A）坚持 **provider-agnostic**：依赖的只是"模型能输出 JSON 文本"这一最低能力。这样 Day 7 切到 Harness 或换模型时，本日代码无需改动。
 
-Day 3 我们坚持 **provider-agnostic** 路径：依赖的只是"模型能输出 JSON 文本"这一最低能力。这样 Day 7 切到 Harness 或换模型时，本日代码无需改动。
+Day 4 开始切到 **工具调用 + 自由调度** 路径：工具入参本身就是结构化 schema，由 LLM 框架（AS-Java）保证；那时候才是真正意义的 "structured output"。
 
-Day 4 开始切到 **工具调用** 路径：工具入参本身就是结构化 schema，由 LLM 框架（AS-Java）保证；那时候才是真正意义的 "structured output"。
+如果你今天就想体验"由 API 层强制保证 schema"，看 **附录 C**，它讲的是 `toolChoice=Specific(...)` 路径 C（跟 Day 4 的"工具集自由调度"是正交的两件事）。
 
 ---
 
-## 13. 写在 Day 4 之前
+## 13. 附录 C · 方案 B：`toolChoice=Specific` 强制单工具
+
+Day 3 主线（方案 A）让 LLM 吐 JSON 文本然后自纠错。还有第二条路 — **方案 B：让 LLM 必须调用一个工具**，工具入参就是 `AnalysisResult` 的字段，由 OpenAI 兼容协议的 `tool_choice` 字段在 API 层强制。
+
+这条路 **不是 Day 4 工具调度的预演**，它跟 Day 4 是正交的：
+- Day 4 = toolkit 注册 N 个工具，让 LLM **自己选**调哪个、调几个
+- 方案 B = 每次 LLM call **强制** 调指定的那一个工具，参数即结构化输出
+
+### C.1 `toolChoice` 四种取值
+
+| 取值 | 行为 | 用途 |
+|------|------|------|
+| `auto`（默认） | LLM 自由决定调或不调 | Day 4 的工具调度 |
+| `required` | 必须调一个工具（哪个由 LLM 选） | 强制行动但允许选择 |
+| `Specific("name")` | **强制** 调指定的那个工具 | 方案 B / 单 schema 产出 |
+| `none` | 禁止调任何工具 | 纯文本回答场景 |
+
+火山方舟 / OpenAI / DashScope / Anthropic 都支持这四种，是行业通用契约。
+
+### C.2 何时用方案 B 而不是方案 A
+
+| 场景 | 选谁 | 原因 |
+|------|------|------|
+| 评测 / 离线评估 / 训练数据生成 | **方案 B** | 需要 100% 确定性结构输出，A 的"自纠错"会引入随机性 |
+| schema 合规率要求 ≥99% | **方案 B** | API 层强制 vs prompt 软约束差一个量级 |
+| 需要 Agent 多步推理（先想再说） | 方案 A | B 强制马上调工具，LLM 没机会"先思考" |
+| 跨多 provider 部署 | 方案 A | `tool_choice` 在小厂模型上支持度参差 |
+| 当前 Day 3 教学 | 两个都试 | 体会差异 |
+
+### C.3 落地代码（30 分钟跑通同样剧本）
+
+#### C.3.1 把 `AnalysisResult` 包成"虚拟工具"
+
+新建 `src/main/java/space/wlshow/scope/tool/SubmitAnalysisTool.java`：
+
+```java
+package space.wlshow.scope.tool;
+
+import io.agentscope.core.tool.Tool;
+import io.agentscope.core.tool.ToolParam;
+import space.wlshow.scope.model.AnalysisResult;
+import space.wlshow.scope.util.Json;
+
+/**
+ * 方案 B 专用"虚拟工具" — 它不真做事，只是 LLM 必须调它，
+ * 调用的入参 = 一个完整的 AnalysisResult。
+ * 我们从 ToolUseBlock 里反序列化拿到结果，根本不让它执行。
+ */
+public class SubmitAnalysisTool {
+
+    @Tool(name = "submit_analysis",
+          description = "提交完整的需求分析结果。**只有这一个工具**，必须用它一次性返回 " +
+                        "app + modules + models + warnings + questions 五个字段。",
+          strict = true)
+    public String submit(
+            @ToolParam(name = "resultJson",
+                       description = "AnalysisResult 的 JSON 字符串") String resultJson
+    ) {
+        // 实际不执行 — 框架在拿到 ToolUseBlock 后我们就拦截
+        return "ACK";
+    }
+}
+```
+
+> 📌 注意 `description` 里直说"只有这一个工具" — 即便 toolChoice 已经在 API 层强制，prompt 配合更稳。
+
+#### C.3.2 `RequirementParserB`（方案 B 版）
+
+```java
+package space.wlshow.scope.agent;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import io.agentscope.core.agent.ReActAgent;
+import io.agentscope.core.message.Msg;
+import io.agentscope.core.message.MsgRole;
+import io.agentscope.core.message.TextBlock;
+import io.agentscope.core.message.ToolUseBlock;
+import io.agentscope.core.model.GenerateOptions;
+import io.agentscope.core.model.ToolChoice;
+import space.wlshow.scope.model.AnalysisResult;
+import space.wlshow.scope.util.Json;
+
+public class RequirementParserB {
+
+    private final ReActAgent agent;
+
+    public RequirementParserB(ReActAgent agent) { this.agent = agent; }
+
+    public AnalysisResult parse(String userRequirement) {
+        Msg out = agent.call(
+                Msg.builder().role(MsgRole.USER)
+                   .content(TextBlock.builder().text(userRequirement).build())
+                   .build(),
+                GenerateOptions.builder()
+                        .toolChoice(ToolChoice.specific("submit_analysis"))   // 关键
+                        .build()
+        ).block();
+
+        // 一次性拿到 ToolUseBlock，不需要 stripFence、不需要重试
+        ToolUseBlock tu = out.getContentBlocks(ToolUseBlock.class).get(0);
+        String resultJson = tu.getInput().path("resultJson").asText();
+        JsonNode node = Json.tree(resultJson);
+        return Json.mapper().treeToValue(node, AnalysisResult.class);
+    }
+}
+```
+
+> ⚠️ `GenerateOptions` / `ToolChoice.specific(...)` 的全限定名以你 AS-Java 1.0.12 jar 里实际为准。1.0.12 之前的版本可能叫 `Generate#options(...).toolChoice(...)`；查 jar 里实际签名替换。
+
+#### C.3.3 Agent 配置改造
+
+```java
+public static ReActAgent buildParserB() {
+    initModels();
+    Toolkit toolkit = new Toolkit(ToolkitConfig.builder().build());
+    toolkit.registerTool(new SubmitAnalysisTool());
+
+    return ReActAgent.builder()
+            .name("RequirementAnalystB")
+            .sysPrompt(Prompts.analyst())            // prompt 几乎不变
+            .model(ModelRegistry.resolve(DEFAULT_MODEL_ID))
+            .toolkit(toolkit)
+            .maxIters(1)                              // 单次 call，不需要 ReAct 多步
+            .build();
+}
+```
+
+#### C.3.4 REPL 加 `/parseB` 命令
+
+```java
+} else if (input.startsWith("/parseB ")) {
+    String req = input.substring("/parseB ".length()).trim();
+    AnalysisResult r = parserB.parse(req);
+    System.out.println("[PARSED-B]\n" + Json.writePretty(r));
+}
+```
+
+### C.4 方案 A vs 方案 B 实测对比
+
+跑同一个输入 "做一个简单员工档案，含姓名工号入职日期"，记录三件事：
+
+| 指标 | 方案 A | 方案 B |
+|------|--------|--------|
+| 调用次数 | 1-3（看运气） | 1（强制） |
+| 平均延迟 | 中（最坏 3 次重试） | 低（一次到位） |
+| 失败率 | 5-15%（看模型） | 0%（API 层挡住） |
+| 输出灵活度 | 高（LLM 可加思考） | 低（必须填工具参数） |
+| 跨 provider | 通用 | 看 `tool_choice` 支持 |
+
+### C.5 何时换回方案 A
+
+- 小厂模型 `tool_choice` 支持度差（火山方舟 doubao-pro 支持；某些开源模型 fine-tune 后破坏了 function calling 能力）
+- 需要 Agent 在产出前**展示推理过程**（B 一上来就调工具，没思考空间）
+- 多 provider 部署，A 是 lowest common denominator
+
+### ✅ 附录 C 验收（可选）
+
+- [ ] `/parseB` 跑通 1 个真实需求
+- [ ] 跟方案 A 同输入对比，看到调用次数差异
+- [ ] 故意制造一个模糊需求，看 B 是否仍然填 questions（B 通常 questions 会比 A 少，因为它"被强制立刻交付"）
+
+---
+
+## 14. 写在 Day 4 之前
 
 明天 Day 4 我们会：
 
@@ -913,3 +1079,5 @@ Day 4 开始切到 **工具调用** 路径：工具入参本身就是结构化 s
 - 工具内部仍然用 `SchemaValidator` 兜底（防止 prompt 漂移），但这次校验对象是单个 spec 而不是整个 AnalysisResult
 
 可以把 Day 3 的 `analyst.md` 留着对比，明天对比一下"自由文本"vs"工具调度"两种 prompt 风格的差异。
+
+> 📌 Day 4 的 `toolChoice` 默认走 `auto`（让 LLM 自由选择 create_app / create_module / create_model 调用顺序）。如果你想体验"强制工作流"，可以在 Day 4 末尾尝试 `toolChoice=required`：让 LLM 必须调某个工具，但允许它选调哪个 — 介于 C 的强制单工具和 Day 4 的全自由之间。

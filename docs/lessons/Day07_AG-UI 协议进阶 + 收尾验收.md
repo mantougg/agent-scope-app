@@ -1248,22 +1248,113 @@ public class DryRunDispatcher implements Dispatcher {
 // SubmitTool
 private final Dispatcher dispatcher;
 // confirmed==true 分支
+List<String> failedIds = new ArrayList<>();
+StringBuilder report = new StringBuilder();
 for (TodoItem it : pending) {
     todos.markRunning(it.id());
+    long start = System.currentTimeMillis();
     try {
         dispatcher.dispatch(it);
         todos.markSuccess(it.id());
+        report.append("OK ").append(it.id()).append('\n');
     } catch (Exception e) {
         todos.markFailed(it.id(), e.getMessage());
+        failedIds.add(it.id());
+        report.append("FAIL ").append(it.id())
+              .append(" reason=").append(e.getMessage()).append('\n');
     }
+}
+
+// 关键：把失败信息以"结构化的"方式回执给 LLM，让它闭环判断
+// 而不是只 markFailed 就完事 — 那样 Agent 不知道发生过失败
+if (!failedIds.isEmpty()) {
+    return "PARTIAL_FAILURE\n" + report +
+           "\n以上 " + failedIds.size() + " 项失败，可继续：\n" +
+           "- 调用 retry_failed(ids=[...]) 触发重试\n" +
+           "- 调用 update_module/update_model 改参数后再 submit\n" +
+           "- 报告用户后由用户决定";
+}
+return "ALL_OK\n" + report;
+```
+
+> 📌 **核心闭环点**：把失败原文（错误消息 + 哪几个 id）拼成 LLM **可读的指令性回执**，借助 prompt 里的"failure-handling"规则让 Agent 自主选下一步动作。这一段是原 Day 6 异常处理收口的"前端回调失败 → 回填 ToolResult 让 Agent 判断重试"的真正落地。
+
+配套地，给 `Toolkit` 加一个 `retry_failed` 工具，让 Agent 有可调用的"重试动作"：
+
+```java
+@Tool(name = "retry_failed",
+      description = "对处于 FAILED 状态的 todo 触发一次重发。" +
+                    "ids 为空时重试所有 FAILED。" +
+                    "重试**不会**复用失败原因；如果失败是参数错，先用 update_* 改参数再 retry。")
+public String retryFailed(@ToolParam(name = "ids",
+        description = "JSON 数组字符串，如 [\"todo-3\",\"todo-5\"]；为空表示全部") String idsJson) {
+    List<String> wanted = (idsJson == null || idsJson.isBlank())
+            ? todos.snapshot().stream()
+                .filter(it -> it.status() == TodoStatus.FAILED)
+                .map(TodoItem::id).toList()
+            : Json.readList(idsJson, String.class);
+
+    StringBuilder rpt = new StringBuilder();
+    for (String id : wanted) {
+        TodoItem cur = todos.get(id);
+        if (cur.status() != TodoStatus.FAILED) {
+            rpt.append("SKIP ").append(id).append(" not FAILED\n"); continue;
+        }
+        // 状态机不允许 FAILED→RUNNING，所以我们用"创建一个新 PENDING TodoItem，复用 payload"
+        // 的策略，原 item 留作审计记录
+        TodoItem newPending = todos.add(cur.type(), cur.targetName(), cur.payload());
+        try {
+            todos.markRunning(newPending.id());
+            dispatcher.dispatch(newPending);
+            todos.markSuccess(newPending.id());
+            rpt.append("RETRY-OK ").append(id).append("->").append(newPending.id()).append('\n');
+        } catch (Exception e) {
+            todos.markFailed(newPending.id(), e.getMessage());
+            rpt.append("RETRY-FAIL ").append(newPending.id())
+               .append(" reason=").append(e.getMessage()).append('\n');
+        }
+    }
+    return rpt.toString();
 }
 ```
 
-测试时换 `FailingDispatcher`：
+#### E4 的系统 prompt 补丁
+
+`analyst-multi-round.md` 末尾追加：
+
+```markdown
+# 部分失败处理
+- 当 submit_to_frontend 返回 `PARTIAL_FAILURE`，按以下顺序判断：
+  1. 失败原因里包含 "timeout" / "5xx" / "connection" → 视为瞬时错误，**直接调 retry_failed(ids=[失败id])**
+  2. 失败原因里包含 "409 conflict" / "duplicate" / "already exists" → **不要重试**，告诉用户"已存在"
+  3. 失败原因里包含 "400" / "validation" / "schema" → 用 update_module/update_model 改参数后再 submit_to_frontend(confirmed=true)
+  4. 其他不明错误 → 报告用户，等用户决定
+- 严禁连续重试同一 id 超过 2 次（防雪崩）
+```
+
+#### E4 集成测试断言（含闭环验证）
 
 ```java
-class FailingDispatcher implements Dispatcher {
-    @Override public void dispatch(TodoItem item) { throw new RuntimeException("frontend 500"); }
+@Test
+void e4_dispatchFailure_agentRetriesViaToolCall() throws Exception {
+    // 安排 dispatcher 第一次失败，第二次成功
+    when(dispatcher.dispatch(any())).thenThrow(new RuntimeException("timeout"))
+                                     .thenReturn(/* no-op */ null);
+    // 录制 LLM mock：收到 PARTIAL_FAILURE 后调 retry_failed(ids=[...])
+    wireMockLlmResponseRetry();
+
+    var events = collectEvents("做一个员工档案管理\n然后提交");
+
+    // 关键断言
+    // 1. 至少一个 TOOL_CALL_RESULT 内容含 "PARTIAL_FAILURE"
+    assertTrue(events.stream().anyMatch(e ->
+            e.type().equals("TOOL_CALL_RESULT") && e.content().contains("PARTIAL_FAILURE")));
+    // 2. LLM 收到失败后又调了 retry_failed 工具
+    assertTrue(events.stream().anyMatch(e ->
+            e.type().equals("TOOL_CALL_START") && "retry_failed".equals(e.toolName())));
+    // 3. 最终所有 todo 是 SUCCESS（含重试出来的新 id）
+    assertTrue(todoManager.snapshot().stream()
+            .anyMatch(it -> it.status() == TodoStatus.SUCCESS));
 }
 ```
 
@@ -1609,17 +1700,174 @@ public class HitlCustomEventHook implements PostActingHook {
 
 ---
 
-## 14. 附录 B · 升级 Harness 的 5 个理由（Day 7 加分项）
+## 14. 附录 B · 升级 Harness（Day 7 加分项，建议 30 min）
 
-如果时间允许，把 `ReActAgent` 换成 `HarnessAgent`（1.1.0-RC1）：
+把 `ReActAgent` 换成 `HarnessAgent`（1.1.0-RC1+）能直接拿走 5 个能力（详细看 [../agents/07-harness.md § 用 Harness 构建 Coding Agent](../agents/07-harness.md)）：
 
-1. 自动 Compaction：E5 不用自己写
-2. ToolResult Eviction：前端返回的大 payload 不污染上下文
-3. Workspace `AGENTS.md`：业务规则沉淀到文件而不是 system prompt
-4. Filesystem 工具：Agent 直接读项目里 Day 2 的 Schema
-5. 内置 Session 抽象：FileSession 可以退役
+| # | 能力 | 替代我们自己写的 |
+|---|------|----------------|
+| 1 | **自动 Compaction** | E5 的 `memory.compactTo(20)` 兜底 |
+| 2 | **ToolResult Eviction** | 前端返回大 payload 不污染上下文（我们当前没处理） |
+| 3 | **Workspace `AGENTS.md`** | 业务规则沉淀到文件，不再塞 system prompt |
+| 4 | **内置 Filesystem 工具** | Agent 能直接读项目里 Day 2 的 Schema |
+| 5 | **内置 Session 抽象** | Day 5 的 `FileSession` 可以退役 |
 
-详见 [../agents/07-harness.md § 用 Harness 构建 Coding Agent](../agents/07-harness.md)。
+下面是最小升级步骤（控制在 30 min 内跑通；**不替换** Day 7 主路径上的代码，只新增 `HarnessProfile`，用 Spring profile 切）。
+
+### B.1 pom 切版本
+
+新加一个 profile，避免影响主分支：
+
+```xml
+<profiles>
+    <profile>
+        <id>harness</id>
+        <properties>
+            <agentscope.version>1.1.0-RC1</agentscope.version>
+        </properties>
+        <dependencies>
+            <dependency>
+                <groupId>io.agentscope</groupId>
+                <artifactId>agentscope-harness</artifactId>
+                <version>${agentscope.version}</version>
+            </dependency>
+        </dependencies>
+    </profile>
+</profiles>
+```
+
+> ⚠️ Harness 在 1.1.x 还是 RC 阶段，API 可能跟正式版有差异。生产环境慎用；本课程作为"提前感受"。
+
+### B.2 写 `HarnessAgentFactory`
+
+新建 `src/main/java/space/wlshow/scope/agent/HarnessAgentFactory.java`：
+
+```java
+package space.wlshow.scope.agent;
+
+import io.agentscope.harness.HarnessAgent;
+import io.agentscope.harness.HarnessConfig;
+import io.agentscope.harness.workspace.Workspace;
+import io.agentscope.core.memory.compaction.SummarizingCompactor;
+import io.agentscope.core.tool.Toolkit;
+import org.springframework.context.annotation.Profile;
+import org.springframework.stereotype.Component;
+import space.wlshow.scope.todo.TodoManager;
+import space.wlshow.scope.tool.*;
+
+import java.nio.file.Path;
+
+@Profile("harness")
+@Component
+public class HarnessAgentFactory {
+
+    public HarnessAgent build(String threadId, TodoManager todos) {
+        Toolkit toolkit = new Toolkit(ToolkitConfig.builder().parallel(true).build());
+        toolkit.registerTool(new FrontendCreateTools(todos));
+        toolkit.registerTool(new TodoQueryTools(todos));
+        toolkit.registerTool(new TodoUpdateTools(todos));
+        toolkit.registerTool(new SubmitTool(todos, /* dispatcher */ null));
+
+        // ① Workspace：把业务规则 / Schema 落到一个目录，Harness 内置 fs 工具能读
+        Workspace ws = Workspace.builder()
+                .rootDir(Path.of("data/workspaces", threadId))
+                .addInitFile("AGENTS.md", AGENTS_MD)             // 业务规则文件
+                .copyClasspathDir("schemas/", "schemas/")        // Day 2 的 schema
+                .build();
+
+        return HarnessAgent.builder()
+                .name("RequirementAnalyst-Harness")
+                .config(HarnessConfig.builder()
+                        // ② 自动 Compaction：超过 30 轮自动总结早期消息
+                        .compactor(SummarizingCompactor.builder()
+                                .maxRounds(30)
+                                .keepRecent(10)
+                                .build())
+                        // ③ ToolResult Eviction：单条 toolResult 超过 4KB 时折叠为"[evicted]"
+                        .toolResultMaxBytes(4096)
+                        // ④ Session 默认走 Harness 内置 JSON 持久化
+                        .sessionDir(Path.of("data/sessions"))
+                        .build())
+                .workspace(ws)
+                .toolkit(toolkit)
+                .model(/* 复用 ModelRegistry.resolve(DEFAULT_MODEL_ID) */ null)
+                .build();
+    }
+
+    private static final String AGENTS_MD = """
+            # AGENTS.md（项目业务规则，会被 Harness 注入到 Agent 的运行上下文）
+
+            ## 命名规则
+            - app.name / moduleId / model.name / field.name：camelCase
+            - 中文标签放进 label / moduleName / comment
+
+            ## 数据模型枚举
+            - model.type ∈ {ENTITY, TASK, TASK_MASTER_SLAVE}
+            - field.dataType ∈ {long, int, double, string, boolean, date, array}
+            - 主键约定：每个 model 必含 name=id, dataType=long, usage=primary
+
+            ## 多轮规则
+            - 新增需求 → list_todos 先看，区分 ADD / MODIFY
+            - 严禁删除既有待办（除非用户明确说"删掉 xxx"）
+
+            ## 失败处理
+            - submit_to_frontend 返回 PARTIAL_FAILURE：
+              1) timeout/5xx → retry_failed
+              2) 409/duplicate → 报告用户
+              3) 400/validation → update_* 改参数后再 submit
+            """;
+}
+```
+
+### B.3 让 `AguiAgentRegistryCustomizer` 按 profile 切
+
+```java
+@Bean
+public AguiAgentRegistryCustomizer aguiAgentRegistryCustomizer(
+        @Autowired(required = false) HarnessAgentFactory harnessFactory) {
+    return registry -> registry.registerFactory("analyst", ctx -> {
+        TodoManager todos = ThreadContext.todos(ctx.threadId());
+        if (harnessFactory != null) {
+            return harnessFactory.build(ctx.threadId(), todos);   // profile=harness 走这条
+        }
+        // 默认走 Day 6/7 的 ReActAgent
+        return AgentFactory.buildAnalystWithTools(todos, ThreadContext.memory(ctx.threadId()));
+    });
+}
+```
+
+### B.4 启动 + 验证
+
+```bash
+# 用 harness profile 起
+mvn spring-boot:run -Dspring-boot.run.profiles=harness
+
+# 起来后 data/workspaces/<threadId>/ 应该自动生成：
+#   AGENTS.md
+#   schemas/analysis-result.schema.json
+#   schemas/app-spec.schema.json ...
+
+ls data/workspaces/$(ls data/workspaces | head -1)/
+```
+
+跑一次"做一个员工档案管理 + 8 轮追加"，看：
+
+1. `data/sessions/<id>.json` 自动生成（不需要 `FileSession`）
+2. 第 31 轮起 `logs/scope.json.log` 出现 `compactor: summarized rounds=20`
+3. 故意让 Dispatcher 返回 10KB+ payload，看 Harness 内部日志的 `toolResult evicted size=10240`
+
+### B.5 何时不该升级
+
+- 你团队还卡在 1.0.x（公司 maven 仓库还没同步 RC）
+- Compaction 总结策略会损失细节，对**审计场景**不合适
+- Workspace 给 Agent fs 权限了，**敏感目录要做白名单**
+
+### ✅ 附录 B 验收（可选）
+
+- [ ] `mvn spring-boot:run -Dspring-boot.run.profiles=harness` 起得来
+- [ ] `data/workspaces/<threadId>/AGENTS.md` 自动生成
+- [ ] 跑 30+ 轮看到 compaction 日志
+- [ ] 切回默认 profile 一切照旧（没破坏主路径）
 
 ---
 

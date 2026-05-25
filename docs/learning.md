@@ -30,11 +30,13 @@
 |-----|------|---------|----------|
 | 1 | 项目骨架 + AS-Java Hello World | 跑通最小 ReActAgent，工程结构定型 | 基础 |
 | 2 | 数据契约 + JSON Schema 校验 | App/Module/Model POJO + Schema 校验器 | #7、#11、#12、#13 |
-| 3 | 需求解析 + Structured Output | 能从中文需求生成结构化草稿 | #1、#2、#6 |
+| 3 | 需求解析 + Structured Output | 能从中文需求生成结构化草稿（CLI） | #1、#2、#6 |
 | 4 | TodoManager + 业务工具集 | 待办状态机 + create_* 工具 | #3、#5 |
-| 5 | 多轮对话 + 增量修改 + HITL | Memory/Session + 用户确认环节 | #8、#9 |
-| 6 | 前端联调 + 全链路日志 | SSE/WebSocket + 结构化日志 | #4、#10 |
-| 7 | 异常处理 + 测试 + 演示 | E2E 测试、Hook 可观测、Demo 录制 | #6、#10、收口 |
+| 5 | 多轮对话 + Memory/Session + HITL (CLI) | 增量更新 + JsonSession + ToolSuspend 确认 | #8、#9 |
+| 6 | AG-UI 协议集成（基础） | Spring Boot starter 接入 + 17 事件 + Vue3 客户端 demo | #4、#14 |
+| 7 | AG-UI 协议进阶 + 收尾验收 | STATE_DELTA 同步 TodoManager + HITL on AG-UI + 可观测三件套（日志/Jaeger/Micrometer）+ 验收 | #4、#9、#10、#14、收口 |
+
+> 📌 **关于需求 #14**：AG-UI（[官方文档](https://java.agentscope.io/zh/task/agui.html)）是本路线图新加入的一条对外契约：所有 Agent ↔ 前端交互必须走 AG-UI 标准事件流（17 种 EventType），不再自定义 SSE payload。Day 6 起 Spring Boot 入口、Day 7 起 TodoManager 状态同步全部对齐这一规范。
 
 ### 0.3 知识前置（建议先翻一遍）
 
@@ -46,19 +48,27 @@
 | 工具系统 | [docs/agents/04-tool-system.md](./agents/04-tool-system.md) |
 | 模型 Provider | [docs/agents/05-model-providers.md](./agents/05-model-providers.md) |
 | Harness（生产级 runtime） | [docs/agents/07-harness.md](./agents/07-harness.md) |
+| AG-UI 协议官方文档 | https://java.agentscope.io/zh/task/agui.html |
+| AG-UI 17 个事件规范 | https://docs.ag-ui.com/concepts/events |
+| @ag-ui/client（前端 SDK） | https://www.npmjs.com/package/@ag-ui/client |
+| OpenTelemetry · Jaeger · Micrometer（Day 7 可观测三件套） | https://opentelemetry.io/docs/zero-code/java/spring-boot-starter/ · https://www.jaegertracing.io/docs/latest/getting-started/ · https://micrometer.io/docs |
 | Project Reactor | https://projectreactor.io/docs/core/release/reference/ |
 | JSON Schema 2020-12 | https://json-schema.org/draft/2020-12/release-notes.html |
 
 ### 0.4 验收基线（一周结束时应满足）
 
 - ✅ `mvn test` 全绿
-- ✅ 一条命令启动，CLI 或 HTTP 接口可输入中文需求
+- ✅ Spring Boot 一条命令启动，浏览器访问 Vue3 前端可输入中文需求
 - ✅ 输入"做一个库存管理系统"能输出 1 个 App + ≥2 个 Module + ≥2 个 Model 的合法 JSON
 - ✅ JSON 通过 Schema 校验
 - ✅ 待办状态可查询，失败可重试
 - ✅ 二次追加"再加个出库审批模块"能增量更新而不是全量重生
 - ✅ 用户确认前不会真正下发前端
-- ✅ `logs/` 下能查到完整一次会话的输入/中间结果/输出
+- ✅ 前后端**完全**通过 AG-UI 标准事件流通信（17 种 EventType，至少使用其中 10 种）
+- ✅ TodoManager 通过 `STATE_SNAPSHOT` + `STATE_DELTA` 镜像到前端，不通过自定义 payload
+- ✅ `logs/` 下能查到完整一次会话的输入/中间结果/输出（**7 个 stage 一个不少**：INPUT/LLM_CALL/TOOL_CALL/SCHEMA_VALIDATE/TODO_UPDATE/FRONTEND_DISPATCH/FRONTEND_CALLBACK）
+- ✅ Jaeger UI 至少 1 条完整 trace（含 `agent.call` + `tool.*` + `frontend_dispatch.*` 子 Span），traceId 跟 jq 日志、curl 响应头**三处对得上**
+- ✅ `/actuator/metrics` 列出 ≥ 5 个 `scope.*` 指标（LLM 延迟、工具调用计数 + 延迟、Prompt 字符直方图等）
 
 ---
 
@@ -387,6 +397,8 @@
 
 ## Day 3 · 需求解析 + Structured Output
 
+> 📘 **详细课程**：[lessons/Day03_需求解析 + Structured Output.md](<./lessons/Day03_需求解析 + Structured Output.md>) — 6 个 Phase 时间盒 + Few-shot 设计 + 重试自纠错 + WireMock 离线回放
+
 ### 学习目标
 
 - 编写第一个能输出**结构化结果**的 Prompt
@@ -482,6 +494,8 @@ public class RequirementParser {
 ---
 
 ## Day 4 · TodoManager + 业务工具集
+
+> 📘 **详细课程**：[lessons/Day04_TodoManager + 业务工具集.md](<./lessons/Day04_TodoManager + 业务工具集.md>) — 6 个 Phase 时间盒 + 状态机单测 + Toolkit 注册 + dry-run 端到端
 
 ### 学习目标
 
@@ -595,12 +609,14 @@ ReActAgent agent = ReActAgent.builder()
 
 ---
 
-## Day 5 · 多轮对话 + 增量修改 + HITL
+## Day 5 · 多轮对话 + Memory/Session + HITL (CLI)
+
+> 📘 **详细课程**：[lessons/Day05_多轮对话 + Memory 与 Session + HITL.md](<./lessons/Day05_多轮对话 + Memory 与 Session + HITL.md>) — 6 个 Phase 时间盒 + ToolSuspend HITL + JsonSession 持久化 + 增量剧本回归
 
 ### 学习目标
 
 - 满足需求 #8：用户补充需求时，**增量更新** TodoManager 而非全量重生
-- 满足需求 #9：在真正下发前**插入用户确认**
+- 满足需求 #9：在真正下发前**插入用户确认**（CLI 版，Day 7 升级到 AG-UI 事件流）
 - 用 Session 持久化让进程重启后能续跑
 
 ### 上午 · Memory 与 Session
@@ -684,7 +700,7 @@ if (out.getGenerateReason() == GenerateReason.TOOL_SUSPENDED) {
 
 ### 增量场景验证
 
-跑这个剧本：
+跑这个剧本（**Day 5 在 CLI 内**完成；Day 7 把同一剧本搬到 AG-UI 事件流上验证）：
 
 1. 用户："做一个库存管理系统"
 2. Agent：输出 App + 2 个 Module（监控/入库）+ 2 个 Model，问"要不要出库？"
@@ -709,198 +725,206 @@ if (out.getGenerateReason() == GenerateReason.TOOL_SUSPENDED) {
 
 ---
 
-## Day 6 · 前端联调 + 全链路日志
+## Day 6 · AG-UI 协议集成（基础）
+
+> 📘 **详细课程**：[lessons/Day06_AG-UI 协议集成（基础）.md](<./lessons/Day06_AG-UI 协议集成（基础）.md>) — 6 个 Phase 时间盒 + Spring Boot starter + 17 事件 + Vue3 + @ag-ui/client 客户端 demo
 
 ### 学习目标
 
-- 实现需求 #4：把待办下发给前端
-- 实现需求 #10：完整日志，能从 traceId 还原一次会话
-- 暴露 HTTP 接口给前端调用 Agent
+- 把 Day 1-5 的 CLI 入口替换成 **Spring Boot WebFlux** + `agentscope-agui-spring-boot-starter`
+- 摸清 **AG-UI 17 个标准事件**：Lifecycle 5 / TextMessage 3 / ToolCall 4 / State 3 / Special 2
+- 能用 `curl` 直接打 SSE 流，看到 `data: {"type":"TEXT_MESSAGE_CONTENT", ...}` 形态
+- 启一个 **Vue3** 前端（Vite 脚手架 + `@ag-ui/client` `HttpAgent`），把流式回复渲染成打字机
 
-### 上午 · 前端通道
+### 上午 · Spring Boot 起步 + starter 注入
 
-1. **传输方式选择**（按你的前端栈选）
-
-   | 方式 | 适合 | 集成成本 |
-   |------|------|---------|
-   | **SSE** | 前端只接收 / 单向流 | 低（Spring Boot WebFlux） |
-   | **WebSocket** | 双向 | 中 |
-   | **HTTP 同步** | 简单 RPC | 最低 |
-   | **MQ（Kafka/RocketMQ）** | 异步、可重放 | 高 |
-
-   建议先用 SSE：天然契合 Reactor，前端 EventSource 一行接入。
-
-2. **加 Spring Boot WebFlux**（如果项目还没用 Spring）
+1. **依赖追加**（关键坐标，详细 BOM 选型见课程文档）
 
    ```xml
    <dependency>
+     <groupId>io.agentscope</groupId>
+     <artifactId>agentscope-agui-spring-boot-starter</artifactId>
+     <version>1.0.9</version>
+   </dependency>
+   <dependency>
      <groupId>org.springframework.boot</groupId>
      <artifactId>spring-boot-starter-webflux</artifactId>
-     <version>3.2.5</version>
    </dependency>
    ```
 
-3. **Controller**
+2. **注册 Agent**（两种方式选一种，课程演示 A，附录给 B）
+
+   **方式 A：`AguiAgentRegistryCustomizer`**
 
    ```java
-   @RestController
-   @RequestMapping("/api/agent")
-   public class AgentController {
-
-       @PostMapping(value = "/chat", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-       public Flux<ServerSentEvent<Object>> chat(@RequestBody ChatReq req) {
-           return agentService.chat(req.sessionId(), req.text())
-               .map(event -> ServerSentEvent.builder().data(event).build());
-       }
-
-       @PostMapping("/confirm")
-       public Mono<Void> confirm(@RequestBody ConfirmReq req) {
-           return agentService.confirm(req.sessionId(), req.confirmed());
-       }
-
-       @GetMapping("/todos/{sessionId}")
-       public Mono<List<TodoItem>> todos(@PathVariable String sessionId) {
-           return agentService.todos(sessionId);
+   @Configuration
+   public class AguiAgentConfig {
+       @Bean
+       public AguiAgentRegistryCustomizer aguiCustomizer(TodoManager todos) {
+           return registry -> registry.registerFactory("analyst",
+               () -> AgentFactory.buildAnalystWithTools(todos));
        }
    }
    ```
 
-4. **FrontendBridge** 真正实现：把 TodoManager 中的项目，按 #11、#12、#13 的形态序列化推到 SSE channel。前端拿到 JSON 自己调它的创建接口。
+   **方式 B：`@AguiAgentId` 注解 Bean**
 
-### 下午 · 日志与可观测
-
-1. **结构化日志**：用 logback `JsonEncoder` 或手写 MDC，每条日志带 `sessionId` + `traceId` + `stage`。
-
-   ```xml
-   <appender name="JSON" class="ch.qos.logback.core.rolling.RollingFileAppender">
-     <file>logs/scope.json.log</file>
-     <encoder class="net.logstash.logback.encoder.LogstashEncoder"/>
-   </appender>
+   ```java
+   @Bean @AguiAgentId("analyst")
+   public Agent analyst() { return AgentFactory.buildAnalystWithTools(todos); }
    ```
 
-2. **关键日志点**（满足需求 #10）
+3. **启动后 starter 自动暴露 `POST /agui/run`**（SSE）
 
-   | 阶段 | 字段 |
-   |------|------|
-   | `INPUT` | sessionId, text, attachments |
-   | `LLM_CALL` | promptHash, tokens, latency |
-   | `TOOL_CALL` | toolName, args(脱敏后) |
-   | `SCHEMA_VALIDATE` | result, errors |
-   | `TODO_UPDATE` | id, status, before→after |
-   | `FRONTEND_DISPATCH` | itemId, payload |
-   | `FRONTEND_CALLBACK` | itemId, success, err |
+### 下午 · 17 个事件 + Vue3 客户端
 
-3. **MDC traceId**：在 Controller 入口生成 traceId 塞 MDC，Reactor 用 `contextWrite(Context.of("traceId", id))` 透传。AS-Java 自身可用 `RuntimeContextAwareHook` 接管（[docs/agents/07-harness.md](./agents/07-harness.md)）。
+1. **事件五类速查**（详细 JSON payload 见 [docs/agents/_links.md](./agents/_links.md) 引用的 AG-UI 官方文档）
 
-4. **可选：OpenTelemetry**（Day 7 也可以做）
+   | 类别 | EventType | 用途 |
+   |------|-----------|------|
+   | Lifecycle | RUN_STARTED / RUN_FINISHED / RUN_ERROR / STEP_STARTED / STEP_FINISHED | 一次 run 的边界、子步骤 |
+   | TextMessage | TEXT_MESSAGE_START / _CONTENT / _END | 流式聊天文本（按 token） |
+   | ToolCall | TOOL_CALL_START / _ARGS / _END / _RESULT | 工具调用全生命周期 |
+   | State | STATE_SNAPSHOT / STATE_DELTA / MESSAGES_SNAPSHOT | TodoManager / 历史消息同步（Day 7 重点） |
+   | Special | RAW / CUSTOM | 透传/扩展事件 |
 
-   ```xml
-   <dependency>
-     <groupId>io.opentelemetry.instrumentation</groupId>
-     <artifactId>opentelemetry-spring-boot-starter</artifactId>
-     <version>2.x</version>
-   </dependency>
+2. **`curl` 直连验证**
+
+   ```bash
+   curl -N -X POST http://localhost:8080/agui/run \
+     -H "Content-Type: application/json" \
+     -d '{"threadId":"t1","runId":"r1","messages":[{"id":"m1","role":"user","content":"做一个简单请假系统"}]}'
    ```
 
-### 异常处理收口（呼应需求 #6）
+3. **Vue3 前端最小可见**（`frontend/` 目录，Vite + Vue3 + `@ag-ui/client`）
 
-- LLM 解析失败 → 把 errors 加到 warnings、提示用户重述
-- Schema 校验失败 → 工具直接失败 + warning
-- 前端回调失败 → TodoItem 标 FAILED + errorMessage，并把 ToolResult 回填给 Agent，让它判断是否重试
-- 用户拒绝 confirm → 维持 PENDING，等下一轮指令
+   ```ts
+   import { HttpAgent } from '@ag-ui/client';
+
+   const agent = new HttpAgent({ url: 'http://localhost:8080/agui/run', threadId: 'thread-' + Date.now() });
+   agent.subscribe({
+     onTextMessageContentEvent: (e) => { /* push 到 reactive 的消息流 */ },
+     onRunFinishedEvent: () => { /* 收尾 */ },
+   });
+   agent.addMessage({ id: 'm1', role: 'user', content: userInput.value });
+   await agent.runAgent({ runId: 'run-' + Date.now() });
+   ```
 
 ### 准备资料
 
-- Spring WebFlux SSE：https://docs.spring.io/spring-framework/reference/web/webflux.html
-- Logstash Logback Encoder：https://github.com/logfellow/logstash-logback-encoder
-- OpenTelemetry Java：https://opentelemetry.io/docs/zero-code/java/
-- [docs/agents/07-harness.md § RuntimeContext](./agents/07-harness.md)
-- 你的题目 #4、#10
+- [docs/agents/05-model-providers.md](./agents/05-model-providers.md)（流式开启复习）
+- AG-UI 协议官方页：https://java.agentscope.io/zh/task/agui.html
+- AG-UI 事件规范（17 种）：https://docs.ag-ui.com/concepts/events
+- `@ag-ui/client` SDK：https://www.npmjs.com/package/@ag-ui/client
+- Vite + Vue3：https://cn.vuejs.org/guide/quick-start.html
 
 ### 当日产出
 
-- [ ] 启动 Spring Boot，前端 / curl 能通过 SSE 与 Agent 对话
-- [ ] 前端 mock 接到 4 类事件（chat-msg / todo-update / await-confirm / dispatch）
-- [ ] `logs/scope.json.log` 能用 jq 过 sessionId 还原全过程
-- [ ] 关掉前端服务 → 看到 TodoItem 走到 FAILED 并有清晰原因
+- [ ] `mvn spring-boot:run` 起 Spring Boot，`/agui/run` 端点 200
+- [ ] `curl -N` 能看到 `RUN_STARTED → TEXT_MESSAGE_* → RUN_FINISHED` 完整事件流
+- [ ] `frontend/` 下 `npm run dev` 起 Vue3，浏览器输入需求能看到打字机回复
+- [ ] 截图 / 录屏一段 30 秒前后端联调 GIF
+
+### 常见坑
+
+- AG-UI starter 走 WebFlux，不能同时再加 `spring-boot-starter-web`（会冲突）
+- 浏览器跨域：Vue3 dev server 在 5173，后端在 8080，要在 Spring Boot 配 `WebFluxConfigurer` 加 CORS
+- `@ag-ui/client` 是 ESM-only，Node 版本 ≥ 18
+- 模型必须 `stream(true)` 才能让 starter 流式吐 `TEXT_MESSAGE_CONTENT`，否则一次性 dump
 
 ---
 
-## Day 7 · 异常处理强化 + 测试 + 演示
+## Day 7 · AG-UI 协议进阶 + 收尾验收
+
+> 📘 **详细课程**：[lessons/Day07_AG-UI 协议进阶 + 收尾验收.md](<./lessons/Day07_AG-UI 协议进阶 + 收尾验收.md>) — 9 个 Phase 时间盒（含 Phase 3a/3b/3c 可观测三连）+ STATE_DELTA 实战 + HITL on AG-UI + 日志/OTel/Micrometer/异常/验收
+> ⏱ **本日 9 学时**（其他天 8 学时），分上午 3.5h + 下午 5.5h；可观测三件套（日志/追踪/指标）一次性打齐
 
 ### 学习目标
 
-- 把前 6 天的脆弱点全部加上回归测试
-- 用 Hook 完成一次"Coding Agent 风格"的可观测增强
-- 录制一段演示，并对照 11 条需求逐项打勾
+- 把 TodoManager 通过 `STATE_SNAPSHOT` + `STATE_DELTA` 实时镜像到 Vue3 UI（替代 Day 6 末尾的"前端自己查 `/todos`"）
+- 把 Day 5 的 **ToolSuspend HITL 升级为 AG-UI HITL**：前端弹窗确认 → 用 `role=tool` 消息回填到下一次 run
+- 可观测三件套全部打齐（需求 #10）：
+  - **日志**：Logback JSON + 7 个关键 stage（INPUT/LLM_CALL/TOOL_CALL/SCHEMA_VALIDATE/TODO_UPDATE/FRONTEND_DISPATCH/FRONTEND_CALLBACK）
+  - **追踪**：OpenTelemetry + Jaeger（本地 docker），traceId 跟 jq 日志、curl 响应头**三处对得上**
+  - **指标**：`ExecutionMetricsHook`（4 个 AS-Java Hook 接口）+ Micrometer + Actuator/Prometheus 端点
+- 跑通异常剧本 + WireMock 集成测试 + 录制演示 + 需求逐项打勾
 
-### 上午 · 强化场景
+### 上午 · STATE 同步 + HITL on AG-UI（3.5h）
 
-1. **异常场景清单**（必跑）
+1. **`AguiStateBridge`**：监听 TodoManager 变更，向当前 run 推 `STATE_DELTA`（RFC 6902 JSON Patch）
 
-   | # | 场景 | 期望 |
-   |---|------|------|
-   | E1 | 需求里只写 1 句话："做个系统" | warnings + questions 非空，待办为空 |
-   | E2 | LLM 返回非 JSON | 自纠错最多 3 次后抛 `ParseException` |
-   | E3 | LLM 输出 Schema 不合法 | 工具拒绝 + 写入 warning |
-   | E4 | 前端 500 | TodoItem→FAILED，可重试 |
-   | E5 | 用户连续追加 5 次需求 | 上下文不超长（启用 Compaction，或 1.1 Harness） |
-   | E6 | 用户中途说"算了，全删了" | TodoManager 清空 + 友好回执 |
-   | E7 | 同名 Module 重复创建 | 拒绝 + warning 提示已存在 |
-   | E8 | 进程 kill 重启 | sessionId 恢复 |
+   ```java
+   public class AguiStateBridge implements TodoChangeListener {
+       private final AguiEventEmitter emitter;
+       public void onCreate(TodoItem it) {
+           emitter.emit(StateDeltaEvent.of(JsonPatch.add("/todos/-", it)));
+       }
+       public void onStatusChange(String id, TodoStatus from, TodoStatus to) {
+           emitter.emit(StateDeltaEvent.of(JsonPatch.replace("/todos/" + idx(id) + "/status", to)));
+       }
+   }
+   ```
 
-2. **测试金字塔**
+2. **HITL on AG-UI**（替换 Day 5 的 CLI 确认）
 
-   - 单测：SchemaValidator / TodoManager 状态机 / FrontendBridge 序列化
-   - 集成：用 `WireMock` 替代真实 LLM，断言完整流程
-   - E2E：录一个真实 LLM 的剧本（带 `@Tag("e2e")`，CI 默认不跑）
+   - Agent 调 `submit_to_frontend` 时，starter 自动发 `TOOL_CALL_START / _ARGS / _END`
+   - 前端拿到 `TOOL_CALL_END` 后渲染确认弹窗
+   - 用户点"确认"，前端发下一次 `runAgent`，`messages` 末尾追加 `{role: 'tool', toolCallId, content: 'USER_CONFIRMED'}`
+   - Agent `await toolResult` 续跑，调 `bridge.dispatchAll(...)` 真正下发
 
-### 下午 · 升级到 Harness（可选但推荐）
+   关键收益：**HITL 链路完全前端化**，CLI 时代要自己 `readLine()` 的代码全部删掉
 
-如果时间允许，把 `ReActAgent` 换成 `HarnessAgent`（1.1.0-RC1），收益：
+### 下午 · 可观测三连 + 异常 + 验收（5.5h）
 
-- 自动 Compaction（解决 E5）
-- 自动 Session 持久化（部分替代 Day 5 自己写的）
-- Tool Result Eviction（前端返回大 payload 不污染上下文）
-- 可加 Workspace `AGENTS.md` 沉淀业务规则
-
-参考 [docs/agents/07-harness.md § 用 Harness 构建 Coding Agent](./agents/07-harness.md)。
-
-### 收尾
-
-1. **写 README**：项目结构、启动方式、示例请求、已知限制
-2. **画一张架构图**：把 Controller / AgentService / Toolkit / TodoManager / FrontendBridge / Memory / Session 之间的箭头画清楚
-3. **录制演示**：3 分钟视频或 GIF，跑完一个完整剧本
-4. **对照需求逐项打勾**：
-
-   | # | 需求 | 兑现位置 |
-   |---|------|---------|
-   | 1 | 用户输入需求 | Controller `/chat` |
-   | 2 | 解析为 App/Module/Model | RequirementParser + FrontendCreateTools |
-   | 3 | 列出待办列表 | TodoManager |
-   | 4 | 前端下发 | FrontendBridge + SSE |
-   | 5 | 状态管理 | TodoStatus 状态机 |
-   | 6 | 异常 warnings/questions | AnalysisResult + Schema 校验 |
-   | 7 | JSON Schema 校验 | SchemaValidator |
-   | 8 | 多轮增量 | Memory + list_todos / update_* 工具 |
-   | 9 | 结果确认 | submit_to_frontend Tool Suspend |
-   | 10 | 日志 | logback JSON + traceId |
-   | 11 | 模块结构 | ModuleSpec |
-   | 12 | 模型结构 | DataModelSpec + FieldSpec |
-   | 13 | 应用结构 | AppSpec |
+1. **Phase 3a · 日志骨架（60 min）**：`logstash-logback-encoder` + `TraceIdFilter`（从 `X-Trace-Id` 请求头优先取）+ `Stage` helper（INPUT/LLM_CALL/.../FRONTEND_CALLBACK 7 个常量）。落地 7 个关键日志点，`jq` 按 traceId 过滤能看到 7 个 stage 一个不少
+2. **Phase 3b · OpenTelemetry + Jaeger（75 min）**：`docker run jaegertracing/all-in-one`；`opentelemetry-spring-boot-starter` + OTLP gRPC exporter；用 `opentelemetry-logback-mdc-1.0` 把 OTel traceId 同步到 MDC（**`trace-id-key: traceId` 必踩的坑**）；`@WithSpan("tool.create_app")` 注解化 Span；Jaeger UI 看 `agent.call → tool.* → frontend_dispatch` 完整 trace
+3. **Phase 3c · Hook 可观测 + Micrometer（45 min）**：`ExecutionMetricsHook` 同时实现 `PreReasoning/PostReasoning/PreActing/PostActing` 四个 hook，把数据喂给 `MeterRegistry`：`scope.llm.latency`（Timer，按 model 切片）、`scope.tool.calls`（Counter，按 toolName + status 切片）、`scope.llm.prompt.chars`（DistributionSummary）；`/actuator/prometheus` 直接被 Prometheus 抓
+4. **Phase 4 · 异常剧本**（E1-E8 全跑通，详见课程文档）
+5. **Phase 5-6 · 演示录制 + 需求打勾**（14 项含新增的 AG-UI 合规 #14）
 
 ### 准备资料
 
-- [docs/agents/07-harness.md](./agents/07-harness.md)
+- AG-UI State 事件：https://docs.ag-ui.com/concepts/events#state-management-events
+- AG-UI HITL（hitl-chat 示例）：https://github.com/agentscope-ai/agentscope-java/tree/main/agentscope-examples/agui
+- Logstash Logback Encoder：https://github.com/logfellow/logstash-logback-encoder
+- OpenTelemetry Spring Boot Starter：https://opentelemetry.io/docs/zero-code/java/spring-boot-starter/
+- Jaeger all-in-one：https://www.jaegertracing.io/docs/latest/getting-started/
+- Micrometer 文档：https://micrometer.io/docs
+- Spring Boot Actuator Metrics：https://docs.spring.io/spring-boot/reference/actuator/metrics.html
+- [docs/agents/07-harness.md § RuntimeContext](./agents/07-harness.md)
 - [docs/agents/10-observability-hitl.md](./agents/10-observability-hitl.md)
 - WireMock：https://wiremock.org/docs/
 
 ### 当日产出
 
-- [ ] 所有异常场景测试通过
-- [ ] README + 架构图入库
-- [ ] 演示视频
-- [ ] 需求逐项打勾的清单（可贴在 PR 描述）
+- [ ] Vue3 UI 左侧聊天 / 右侧 Todo 看板，Todo 状态实时切换无刷新
+- [ ] 用户点"确认"后 Agent 真正下发，点"取消"待办保持 PENDING
+- [ ] `logs/scope.json.log` 能用 `jq 'select(.traceId=="...")'` 还原全过程；**7 个 stage 一个不少**
+- [ ] `docker ps` 看到 `jaeger`，Jaeger UI `http://localhost:16686` 至少 1 条完整 trace（含 `agent.call` + `tool.*` 子 Span）
+- [ ] curl 响应头 `X-Trace-Id`、jq 日志 `.traceId`、Jaeger UI traceId **三处对得上**
+- [ ] `/actuator/metrics` 列出至少 5 个 `scope.*` 指标；`/actuator/prometheus` 含 `scope_tool_calls_total`
+- [ ] 8 个异常剧本全部测试通过
+- [ ] 3 分钟演示视频
+- [ ] 14 条需求（#1-#13 + #14 AG-UI）逐项打勾的清单（贴 PR 描述）
+
+### 收尾打勾
+
+| # | 需求 | 兑现位置 |
+|---|------|---------|
+| 1 | 用户输入需求 | Vue3 输入框 → `/agui/run` |
+| 2 | 解析为 App/Module/Model | RequirementParser + FrontendCreateTools |
+| 3 | 列出待办列表 | TodoManager + STATE_SNAPSHOT 推送 |
+| 4 | 前端下发 | FrontendCreateTools → bridge.dispatchAll（HITL 通过后） |
+| 5 | 状态管理 | TodoStatus 状态机 + STATE_DELTA |
+| 6 | 异常 warnings/questions | AnalysisResult + Schema 校验 |
+| 7 | JSON Schema 校验 | SchemaValidator |
+| 8 | 多轮增量 | Memory + list_todos / update_* 工具 |
+| 9 | 结果确认 | submit_to_frontend → TOOL_CALL 事件 → 前端弹窗 → role=tool 回填 |
+| 10 | 日志 | logback JSON + MDC traceId |
+| 11 | 模块结构 | ModuleSpec |
+| 12 | 模型结构 | DataModelSpec + FieldSpec |
+| 13 | 应用结构 | AppSpec |
+| 14 | AG-UI 协议合规 | starter `/agui/run` + 17 事件 + Vue3 `@ag-ui/client` |
 
 ---
 
@@ -936,15 +960,38 @@ private static String stripFence(String s) {
 }
 ```
 
-### A.3 SSE 事件结构（前端约定）
+### A.3 AG-UI 事件速查（前端约定）
+
+Day 6/7 起前后端**只走 AG-UI 标准事件**。SSE 帧形如 `data: {"type":"<EventType>", ...payload}`，前端用 `@ag-ui/client` 的回调即可消费。
 
 ```json
-{ "type": "chat",            "data": { "text": "..." } }
-{ "type": "todo-update",     "data": { "id": "...", "status": "RUNNING" } }
-{ "type": "await-confirm",   "data": { "todos": [...] } }
-{ "type": "dispatch",        "data": { "endpoint": "create_app", "payload": {...} } }
-{ "type": "error",           "data": { "message": "..." } }
+// Lifecycle
+{ "type": "RUN_STARTED",          "threadId": "t1", "runId": "r1" }
+{ "type": "RUN_FINISHED",         "threadId": "t1", "runId": "r1" }
+{ "type": "RUN_ERROR",            "message": "..." }
+
+// TextMessage（流式聊天）
+{ "type": "TEXT_MESSAGE_START",   "messageId": "m1", "role": "assistant" }
+{ "type": "TEXT_MESSAGE_CONTENT", "messageId": "m1", "delta": "你好" }
+{ "type": "TEXT_MESSAGE_END",     "messageId": "m1" }
+
+// ToolCall（HITL 也走这一路）
+{ "type": "TOOL_CALL_START",      "toolCallId": "tc1", "toolName": "submit_to_frontend" }
+{ "type": "TOOL_CALL_ARGS",       "toolCallId": "tc1", "delta": "{\"confirmed\":" }
+{ "type": "TOOL_CALL_END",        "toolCallId": "tc1" }
+{ "type": "TOOL_CALL_RESULT",     "toolCallId": "tc1", "content": "..." }
+
+// State（TodoManager 镜像）
+{ "type": "STATE_SNAPSHOT",       "snapshot": { "todos": [...] } }
+{ "type": "STATE_DELTA",          "delta": [{ "op": "replace", "path": "/todos/0/status", "value": "SUCCESS" }] }
+{ "type": "MESSAGES_SNAPSHOT",    "messages": [...] }
+
+// Special
+{ "type": "RAW",                  "event": {...}, "source": "..." }
+{ "type": "CUSTOM",               "name": "...", "value": {...} }
 ```
+
+> **HITL 时序提示**：`TOOL_CALL_END` 之后前端弹窗确认；用户点确认 → 发下一次 `runAgent`，`messages` 末尾追加 `{role:"tool", toolCallId:"tc1", content:"USER_CONFIRMED"}` 即可让 Agent 续跑。详见 Day 7 课程。
 
 ---
 
@@ -974,6 +1021,7 @@ private static String stripFence(String s) {
 ## 备注
 
 - 本计划假设你有 **中级 Java 经验** + **了解 Spring Boot/Reactor 基础**。如果你没用过 Reactor，Day 1 多花半天看官方 reference 第 1-3 章。
-- 计划中没强行用 1.1 Harness，是为了 Day 1-6 保持稳定栈。Day 7 升级是"加分项"。
-- 若你的前端栈是 React / Vue，附录 A.3 的事件协议可直接复用；若是 PC 客户端，把 SSE 换成 WebSocket 即可。
+- Day 1-5 不依赖 Spring，方便聚焦 Agent 本体；Day 6 起切到 Spring Boot WebFlux + `agentscope-agui-spring-boot-starter`，是为了对齐 AG-UI 协议这一新增需求 #14。
+- 前端固定 Vue3 + `@ag-ui/client`（Vite 脚手架）。如果你团队栈是 React，把客户端换成 CopilotKit 即可，事件协议完全一样。
+- Day 7 末尾把 `ReActAgent` 升级到 `HarnessAgent`（1.1.0-RC1）是加分项，主要解决 Compaction 与大 ToolResult 污染上下文的问题；非必须。
 - 任何一天卡住超过 2 小时，回头查 [docs/agents/](./agents/) 对应章节，或在群里贴上下文 + 报错 + 已尝试。
