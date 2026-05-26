@@ -85,7 +85,7 @@
 
 ### 上午 · 工程搭建
 
-1. **新建 Maven 工程**（包名建议 `com.yourorg.scope`，artifactId `agent-scope-app`）
+1. **新建 Maven 工程**（本仓库使用 `space.wlshow.scope`，artifactId `agent-scope-app`；自己起新项目时挑一个跟你公司域名一致的根包名即可）
 
    `pom.xml` 关键依赖：
 
@@ -134,18 +134,20 @@
    </dependencies>
    ```
 
-2. **目录结构**
+2. **目录结构**（本仓库已落地，包名 `space.wlshow.scope`）
 
    ```
-   src/main/java/com/yourorg/scope/
+   src/main/java/space/wlshow/scope/
    ├── ScopeApp.java                # 入口
    ├── config/                      # Typesafe Config 包装
-   ├── model/                       # POJO：App / Module / DataModel / TodoItem
+   ├── spec/                        # POJO：App / Module / DataModel
    ├── agent/                       # AgentFactory / 自定义 Agent 配置
    ├── tool/                        # 业务工具（create_app 等）
    ├── schema/                      # JSON Schema 校验
    ├── todo/                        # TodoManager
-   ├── frontend/                    # 前端通道
+   ├── session/                     # Day 5+ FileSession 持久化
+   ├── hook/                        # 自定义 Hook（PromptLengthHook 等）
+   ├── model/                       # AS-Java Model 注册表（ModelRegistry）
    └── util/
 
    src/main/resources/
@@ -157,13 +159,14 @@
    src/test/java/...
    ```
 
-3. **配置文件 `application.conf`**
+3. **配置文件 `application.conf`**（本仓默认走火山方舟 Ark，OpenAI 兼容协议；要换 DashScope/OpenAI 改 `baseUrl` 与 API Key 即可）
 
    ```hocon
    model {
-     provider = "dashscope"
-     name     = "qwen-max"
-     apiKey   = ${?DASHSCOPE_API_KEY}
+     provider = "volcengine-ark"
+     name     = "doubao-1-5-pro-32k-250115"
+     baseUrl  = "https://ark.cn-beijing.volces.com/api/v3"
+     apiKey   = ${?ARK_API_KEY}
    }
    agent {
      name      = "RequirementAnalyst"
@@ -174,7 +177,7 @@
 
 ### 下午 · Hello World
 
-1. **写一个 `AgentFactory`**
+1. **写一个 `AgentFactory`**（本仓默认走火山方舟，用 AS-Java 的 `OpenAIChatModel` + `baseUrl` 即可；若换 DashScope/OpenAI 用对应的 `DashScopeChatModel` 或同样的 `OpenAIChatModel`+不同 baseUrl）
 
    ```java
    public final class AgentFactory {
@@ -183,9 +186,11 @@
            return ReActAgent.builder()
                .name(cfg.agentName())
                .sysPrompt("你是需求分析助手，回答尽量简洁。")
-               .model(DashScopeChatModel.builder()
+               .model(OpenAIChatModel.builder()
                    .apiKey(cfg.modelApiKey())
                    .modelName(cfg.modelName())
+                   .baseUrl(cfg.modelBaseUrl())     // 火山方舟兼容 OpenAI 协议
+                   .stream(true)                    // 流式必开，Day 6 SSE 才有 token 增量
                    .build())
                .maxIters(cfg.maxIters())
                .build();
@@ -226,7 +231,7 @@
 
 ### 常见坑
 
-- DashScope key 没设：用 `System.getenv` 之前确认环境变量已加载
+- API Key 没设：用 `System.getenv` 之前确认 `ARK_API_KEY`（或对应 provider 的 key 环境变量）已加载
 - Windows 下 Reactor 的 `block()` 超时：开发期把超时拉长到 2 min
 - JDK 版本：必须 17+，IDE 与 `pom.xml` 一致
 
@@ -256,7 +261,7 @@
    <dependency>
      <groupId>com.networknt</groupId>
      <artifactId>json-schema-validator</artifactId>
-     <version>1.4.0</version>
+     <version>2.0.0</version>
    </dependency>
    ```
 
@@ -663,36 +668,39 @@ ReActAgent agent = ReActAgent.builder()
 
 ```java
 @Tool(name = "submit_to_frontend",
-      description = "把所有待办发送给前端创建。必须先获得用户确认。")
-public ToolResultBlock submitToFrontend(@ToolParam(name = "confirmed") boolean confirmed) {
+      description = "把所有待办发送给前端创建。必须先获得用户确认。" +
+                    "【调用时机】仅当用户明确说提交 / 确认时调；需求分析阶段不要调。")
+public String submitToFrontend(@ToolParam(name = "confirmed") boolean confirmed) {
     if (!confirmed) {
-        // 抛出挂起异常，让上游展示待办给用户
+        // 抛出挂起异常，让上游展示待办给用户（1.0.12 实际包名：io.agentscope.core.tool.ToolSuspendException）
         throw new ToolSuspendException("AWAITING_USER_CONFIRMATION");
     }
-    // confirmed==true 才真的下发
+    // confirmed==true 才真的下发；返回 String 即可，框架会自动包成 ToolResultBlock
     return bridge.dispatchAll(todos.snapshot());
 }
 ```
 
-调用端：
+调用端（1.0.12 实战形态——id 直接长在挂起的 `ToolResultBlock` 上，不用再去翻 `ToolUseBlock`）：
 
 ```java
 Msg out = agent.call(userMsg).block();
 
 if (out.getGenerateReason() == GenerateReason.TOOL_SUSPENDED) {
-    // 展示待办，等用户回复 yes/no
+    // 框架在 out.content 里塞了一个 isSuspended()==true 的 ToolResultBlock，自带 id / name / reason
+    ToolResultBlock pending = out.getContentBlocks(ToolResultBlock.class).stream()
+            .filter(ToolResultBlock::isSuspended).findFirst().orElseThrow();
     showTodoTable(todos.snapshot());
     boolean ok = readUserConfirm();
 
-    // 把用户答复作为 tool_result 回填
-    for (ToolUseBlock tu : out.getContentBlocks(ToolUseBlock.class)) {
-        agent.call(Msg.builder().role(MsgRole.TOOL)
-            .content(ToolResultBlock.of(tu.getId(), tu.getName(),
-                TextBlock.builder().text(ok ? "USER_CONFIRMED" : "USER_REJECTED").build()))
-            .build()).block();
-    }
+    // 回填 ToolResult：同一个 id / name，文本是 USER_CONFIRMED / USER_REJECTED
+    agent.call(Msg.builder().role(MsgRole.TOOL)
+        .content(ToolResultBlock.of(pending.getId(), pending.getName(),
+            TextBlock.builder().text(ok ? "USER_CONFIRMED" : "USER_REJECTED").build()))
+        .build()).block();
 }
 ```
+
+> 📌 早期文档曾用 `out.getContentBlocks(ToolUseBlock.class)` 循环回填——那是更旧 patch 版本的形态。1.0.12 已经简化成"挂起 `ToolResultBlock` 直接带 id"，详见 Day 5 §13 附录 C errata。
 
 **路线 B：Hook 拦截**
 
@@ -738,13 +746,13 @@ if (out.getGenerateReason() == GenerateReason.TOOL_SUSPENDED) {
 
 ### 上午 · Spring Boot 起步 + starter 注入
 
-1. **依赖追加**（关键坐标，详细 BOM 选型见课程文档）
+1. **依赖追加**（关键坐标，详细 BOM 选型见课程文档；starter 与主包同步版本，复用 `${agentscope.version}`）
 
    ```xml
    <dependency>
      <groupId>io.agentscope</groupId>
      <artifactId>agentscope-agui-spring-boot-starter</artifactId>
-     <version>1.0.9</version>
+     <version>${agentscope.version}</version>
    </dependency>
    <dependency>
      <groupId>org.springframework.boot</groupId>
@@ -754,24 +762,30 @@ if (out.getGenerateReason() == GenerateReason.TOOL_SUSPENDED) {
 
 2. **注册 Agent**（两种方式选一种，课程演示 A，附录给 B）
 
-   **方式 A：`AguiAgentRegistryCustomizer`**
+   **方式 A：`AguiAgentRegistryCustomizer`** — 每个 threadId 复用 Day 5 已落地的 `FileSession`，重启不丢待办
 
    ```java
    @Configuration
    public class AguiAgentConfig {
+       @PostConstruct public void init() { AgentFactory.initModels(); }   // 模型只注册一次
+
        @Bean
-       public AguiAgentRegistryCustomizer aguiCustomizer(TodoManager todos) {
-           return registry -> registry.registerFactory("analyst",
-               () -> AgentFactory.buildAnalystWithTools(todos));
+       public AguiAgentRegistryCustomizer aguiCustomizer() {
+           return registry -> registry.registerFactory("analyst", ctx -> {
+               FileSession session = FileSession.loadOrNew(ctx.threadId());
+               return AgentFactory.buildAnalystWithTools(session.todos, session.memory);
+           });
        }
    }
    ```
 
-   **方式 B：`@AguiAgentId` 注解 Bean**
+   **方式 B：`@AguiAgentId` 注解 Bean**（所有用户共享一份 Memory/TodoManager，仅适合 demo）
 
    ```java
    @Bean @AguiAgentId("analyst")
-   public Agent analyst() { return AgentFactory.buildAnalystWithTools(todos); }
+   public Agent analyst(TodoManager todos, Memory memory) {
+       return AgentFactory.buildAnalystWithTools(todos, memory);
+   }
    ```
 
 3. **启动后 starter 自动暴露 `POST /agui/run`**（SSE）

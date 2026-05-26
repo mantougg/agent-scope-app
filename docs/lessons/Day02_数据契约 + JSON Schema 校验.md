@@ -93,7 +93,7 @@
 <dependency>
     <groupId>com.networknt</groupId>
     <artifactId>json-schema-validator</artifactId>
-    <version>1.4.0</version>
+    <version>2.0.0</version>
 </dependency>
 ```
 
@@ -509,7 +509,7 @@ mvn -q test -Dtest=JsonRoundTripTest
 | 坑 | 解释 |
 |----|------|
 | **`$ref` 必须用 `#/` 起手的绝对 JSON Pointer** | `"#/$defs/FieldSpec"` ✅；`"FieldSpec"` 或 `"/$defs/FieldSpec"` 都 ❌ |
-| **递归 `$ref` 自身** | `FieldSpec.subs.items` 引用 `FieldSpec` 自己，networknt 1.4.0 默认支持但会做循环检测 |
+| **递归 `$ref` 自身** | `FieldSpec.subs.items` 引用 `FieldSpec` 自己，networknt 2.0.0 默认支持但会做循环检测 |
 | **`additionalProperties: false`** | 显式禁止额外字段，避免 LLM 多吐 `_internal` 之类的字段假装合规。Day 3 视情况放宽 |
 | **`comment / usage / relateModelType` 用 `["string","null"]`** | 题面里这些字段允许空字符串，但 LLM 也可能输出 `null`；与 POJO 的 nullable 一致 |
 | **`subs` 用 `oneOf: [null, array]`** | 既允许显式 `null`（叶子节点），又允许数组（递归） |
@@ -625,7 +625,7 @@ public record ValidationError(String path, String keyword, String message, Strin
 }
 ```
 
-> 📌 networknt 1.4.0 没有 `getPath()`——它提供 `getInstanceLocation()`（JSON Pointer 对象，指向**数据**中出错的位置，比如 `/models/0/fields/1/dataType`）和 `getEvaluationPath()`（指向**Schema**中触发关键字的位置，比如 `/$defs/FieldSpec/properties/dataType/enum`）。我们想给用户看的是数据路径，所以优先用 `getInstanceLocation()`，缺失时兜底到 `getEvaluationPath()`。**测试断言要用 `/` 分隔的 JSON Pointer 写法**（`e.path().contains("moduleId")` 这种 `contains` 检查不受影响）。
+> 📌 networknt 2.0.0 没有 `getPath()`——它提供 `getInstanceLocation()`（JSON Pointer 对象，指向**数据**中出错的位置，比如 `/models/0/fields/1/dataType`）和 `getEvaluationPath()`（指向**Schema**中触发关键字的位置，比如 `/$defs/FieldSpec/properties/dataType/enum`）。我们想给用户看的是数据路径，所以优先用 `getInstanceLocation()`，缺失时兜底到 `getEvaluationPath()`。**测试断言要用 `/` 分隔的 JSON Pointer 写法**（`e.path().contains("moduleId")` 这种 `contains` 检查不受影响）。
 
 ### 7.2 `SchemaValidator.java`
 
@@ -1045,7 +1045,7 @@ git commit -m "day2: 数据契约 + JSON Schema 校验"
 | `$ref` | 引用 | `"#/$defs/FieldSpec"` |
 | `oneOf` | 多形态之一 | `FieldSpec.subs`（null 或 array） |
 
-### A.2 networknt `ValidationMessage` 关键 API（1.4.0）
+### A.2 networknt `ValidationMessage` 关键 API（2.0.0）
 
 ```java
 m.getType()              // 关键字名："enum"、"required"、"pattern" ...
@@ -1056,7 +1056,7 @@ m.getArguments()         // 关键字相关的额外参数，比如 enum 的 all
 m.getMessage()           // 默认英文消息（如 "$.x.y: must be one of [...]"）
 ```
 
-> ⚠️ 老资料里常出现的 `m.getPath()` 在 1.4.0 已被拆成 `getInstanceLocation()` / `getEvaluationPath()`。给用户看 JSON 路径用前者，给 Schema 开发者定位规则用后者。
+> ⚠️ 老资料里常出现的 `m.getPath()` 在 1.4.0 起被拆成 `getInstanceLocation()` / `getEvaluationPath()`，2.0.0 沿用。给用户看 JSON 路径用前者，给 Schema 开发者定位规则用后者。
 
 ### A.3 把 LLM 的 JSON 拿来校验（Day 3 会用）
 
