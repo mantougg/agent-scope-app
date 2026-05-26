@@ -22,9 +22,9 @@ import java.util.Scanner;
 
 import static space.wlshow.scope.util.Prompts.analyst;
 
-public class ScopeApp {
+public class ScopeReplApp {
 
-    private static final Logger log = LoggerFactory.getLogger(ScopeApp.class);
+    private static final Logger log = LoggerFactory.getLogger(ScopeReplApp.class);
 
     static ReActAgent parserAgent = AgentFactory.buildParser();
     static SchemaValidator validator = new SchemaValidator("/schemas/analysis-result.schema.json");
