@@ -140,7 +140,7 @@ data: {"type":"RUN_FINISHED","threadId":"t1","runId":"r1"}
 ```xml
 <properties>
     <spring-boot.version>3.2.5</spring-boot.version>
-    <agentscope.agui.version>1.0.9</agentscope.agui.version>
+    <!-- AG-UI starter 跟主包 agentscope 同步发布；这里直接复用 Day 1 起就有的 ${agentscope.version}（1.0.12） -->
 </properties>
 
 <dependencyManagement>
@@ -156,6 +156,8 @@ data: {"type":"RUN_FINISHED","threadId":"t1","runId":"r1"}
 </dependencyManagement>
 ```
 
+> ⚠️ **版本对齐 (重要)**：项目 Day 1 起 `agentscope` 锁在 1.0.12，AG-UI starter 要用**同一个版本**。引入后跑一次 `mvn dependency:tree | grep agentscope` 确认 `agentscope-core` 没有被 starter 反向降级（如果发布滞后只有 1.0.9，要么等 starter 跟上、要么把主包降到 1.0.9 一起回退——但回退会让 Day 5 已落地的 `FileSession`/`runSubmit` 代码出问题，**不推荐**）。
+
 #### 4.1.2 加运行时依赖
 
 ```xml
@@ -169,11 +171,11 @@ data: {"type":"RUN_FINISHED","threadId":"t1","runId":"r1"}
 <dependency>
     <groupId>io.agentscope</groupId>
     <artifactId>agentscope-agui-spring-boot-starter</artifactId>
-    <version>${agentscope.agui.version}</version>
+    <version>${agentscope.version}</version>
 </dependency>
-
-<!-- 日志：被 Spring Boot 替换为 spring-boot-starter-logging（含 logback），重复依赖让 maven 自己 dedup -->
 ```
+
+> 📌 不要再保留 `logback-classic 1.5.6` 的显式 `<version>` 字段——交给 `spring-boot-dependencies` 接管（详见 4.1.4）。
 
 > ⚠️ **不要同时加 `spring-boot-starter-web`**，它是 servlet（Tomcat），跟 WebFlux 冲突。
 
@@ -189,11 +191,36 @@ data: {"type":"RUN_FINISHED","threadId":"t1","runId":"r1"}
 
 #### 4.1.4 处理日志冲突
 
-Day 1 我们用了 `logback-classic 1.5.6`。Spring Boot 3.2.5 自带 logback-classic 1.4.x。让 Boot 控制版本（删除我们 pom 里的 `<version>` 字段，让 dependencyManagement 接管）。
+Day 1 我们在 `pom.xml` 显式写了 `logback-classic 1.5.6`。引入 Spring Boot 3.2.5 后，`spring-boot-dependencies` BOM 里管的是 **logback-classic 1.4.14**——也就是说，删掉显式 `<version>` 让 BOM 接管会**降级一档**。
+
+- 1.4.x → 1.5.x 主要差异是日志条件评估和异步 appender，**Day 1 那套 UTF-8 编码器写法两版完全兼容**，可以放心降级
+- 如果你想保留 1.5.6，把那段依赖留着 `<version>1.5.6</version>` 即可，BOM 不会强制；只是 SLF4J 桥接 jar 由 BOM 管，不要再显式写
+
+完整改法：把 `<dependency><artifactId>logback-classic</artifactId>` 那一段的 `<version>1.5.6</version>` 整行删除。引入后跑一次 `mvn dependency:tree | grep logback` 确认实际版本。
+
+#### 4.1.5 完整的 pom 末态（关键差异）
+
+为避免学生把片段贴错位置，这里列 Day 6 改完后 pom 与 Day 5 相比的**净增项**：
+
+| 节点 | 内容 |
+|------|------|
+| `<properties>` 增 | `<spring-boot.version>3.2.5</spring-boot.version>` |
+| `<dependencyManagement><dependencies>` **新增** | `spring-boot-dependencies` `pom`/`import` |
+| `<dependencies>` 增 | `spring-boot-starter-webflux`、`agentscope-agui-spring-boot-starter` |
+| `<dependencies>` 改 | `logback-classic` 删掉 `<version>` 字段 |
+| `<build><plugins>` 增 | `spring-boot-maven-plugin` |
+
+如果哪一节定位不到，停下来对照本仓 `pom.xml` 的层级，**不要**把 `<plugin>` 放到 `<dependencies>` 里去。
 
 ### 4.2 调整入口
 
-把 `space.wlshow.scope.ScopeApp` 改成 Spring Boot 启动类（保留 CLI 的话可以加 profile 切换，今天我们**直接切走 CLI**）：
+**前置认知**：到 Day 5 为止，`ScopeApp.java` 已经是一个跑了 250 行的 CLI REPL，含 `/parse` `/run` `/submit` `/todos` 四个子命令、`FileSession` 持久化、HITL 挂起回填。**这套代码不能丢**——Day 6 切 Spring Boot 后用 `ScopeReplApp` 这个备份类整体收纳，方便回退调试。
+
+#### 4.2.1 拆分步骤
+
+1. **复制** 当前 `src/main/java/space/wlshow/scope/ScopeApp.java` → 同目录新建 `ScopeReplApp.java`
+2. 改新文件首行 `public class ScopeApp` → `public class ScopeReplApp`，其它**一字不动**
+3. **重写**原 `ScopeApp.java` 为 Spring Boot 引导：
 
 ```java
 package space.wlshow.scope;
@@ -209,7 +236,27 @@ public class ScopeApp {
 }
 ```
 
-> 📌 原 REPL 代码我们移到 `ScopeReplApp`（一个不带 Spring 注解的备份 main 类），需要走 CLI 调试时手动 `mvn exec:java -Dexec.mainClass=...ScopeReplApp`。
+> 📌 不要保留原 `ScopeApp` 里的 `parserAgent / session / analystWithTools` 等静态字段——Spring Boot 引导阶段静态字段会**抢在**配置加载之前初始化，可能踩到 `application.yml` 还没注入的坑。Day 5 的这些会话状态从 Day 6 起改由 `AguiAgentConfig` 在每个 `threadId` 上下文里按需构建（详见 Phase 2）。
+
+#### 4.2.2 需要 CLI 调试时怎么办
+
+```bash
+# 跑 Spring Boot 引导（Day 6 起的默认路径）
+mvn -q spring-boot:run
+
+# 临时回到 Day 5 的 CLI（不启 8080 端口）
+mvn -q compile exec:java -Dexec.mainClass=space.wlshow.scope.ScopeReplApp
+```
+
+`pom.xml` 里的 `<exec.mainClass>` 默认仍指向 `ScopeApp`，所以 Spring Boot 是新默认；CLI 走 `-Dexec.mainClass` 覆盖即可。
+
+#### 4.2.3 验证
+
+```bash
+mvn -q compile
+```
+
+不应有任何编译错误。`ScopeReplApp` 的 `main` 仍然能编（虽然不会被默认入口调用），Spring Boot 引导类也能编。
 
 ### 4.3 `src/main/resources/application.yml`
 
@@ -217,18 +264,11 @@ public class ScopeApp {
 server:
   port: 8080
 
-spring:
-  webflux:
-    base-path: /
-
 # AG-UI starter 配置（具体 key 看 starter 文档；以下是常见项）
 agentscope:
   agui:
     base-path: /agui          # 暴露根：/agui/run / /agui/agents
     default-agent: analyst     # 客户端不传 agentId 时使用
-    cors:
-      allowed-origins: "http://localhost:5173"   # Vue3 dev server
-      allowed-methods: "GET,POST,OPTIONS"
 
 logging:
   level:
@@ -236,16 +276,18 @@ logging:
     io.agentscope: INFO
 ```
 
-> ⚠️ 具体的 `agentscope.agui.*` 配置 key **以你拉到的 starter 版本** 实际为准。看 starter 的 `META-INF/spring-configuration-metadata.json` 或者源码的 `@ConfigurationProperties` 类。
+> ⚠️ **关于 CORS**：本课走 5.4 节的 `CorsWebFilter` Bean（编程式）这一条路，所以**不**在这里写 `agentscope.agui.cors.*`。两边同时写一般会让响应头里出现两份 `Access-Control-Allow-Origin`，部分 Chrome 版本直接拒。如果你想完全靠 yml，删掉 5.4 节的 Bean；二选一。
+>
+> ⚠️ `spring.webflux.base-path` 默认就是 `/`，没必要写。具体的 `agentscope.agui.*` 配置 key **以你拉到的 starter 版本** 实际为准。看 starter 的 `META-INF/spring-configuration-metadata.json` 或者源码的 `@ConfigurationProperties` 类。
 
-### 4.4 把 Day 5 的 `application.conf` 改为 Spring 友好
+### 4.4 沿用 Day 1 起的 `application.conf`
 
 Spring Boot 默认不读 Typesafe Config。两个选择：
 
 - **A**：把 `model { ... agent { ... }` 翻译进 `application.yml`，删 `application.conf`
 - **B**：保留 `AppConfig.loadLayered()`，让 Spring Bean 调它（影响小，本课走这条）
 
-不动 `AppConfig`，让它继续负责 model / agent 配置。`application.yml` 只管 Spring/AG-UI/CORS。
+不动 `AppConfig`，让它继续负责 model / agent 配置。`application.yml` 只管 Spring/AG-UI/日志。`application-local.conf` 也照样生效（仍然 gitignored，仍然按 `-D > local > 主` 三层叠加）。
 
 ### 4.5 启动验证
 
@@ -288,91 +330,63 @@ package space.wlshow.scope.config;
 
 import io.agentscope.agui.spring.AguiAgentRegistryCustomizer;
 import io.agentscope.core.ReActAgent;
-import io.agentscope.core.memory.InMemoryMemory;
-import io.agentscope.core.memory.Memory;
-import io.agentscope.core.tool.Toolkit;
-import io.agentscope.core.tool.ToolkitConfig;
+import jakarta.annotation.PostConstruct;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import space.wlshow.scope.agent.AgentFactory;
-import space.wlshow.scope.todo.TodoManager;
-import space.wlshow.scope.tool.FrontendCreateTools;
-import space.wlshow.scope.tool.SubmitTool;
-import space.wlshow.scope.tool.TodoQueryTools;
-import space.wlshow.scope.tool.TodoUpdateTools;
-import space.wlshow.scope.util.Prompts;
+import space.wlshow.scope.session.FileSession;
 
 @Configuration
 public class AguiAgentConfig {
 
+    private static final Logger log = LoggerFactory.getLogger(AguiAgentConfig.class);
+
     /**
-     * 每个 threadId 一个独立的 TodoManager + Memory + Agent。
-     * starter 在收到 /agui/run 时调用 factory，传入当前 thread 上下文。
+     * 模型注册只跑一次：放在 lambda 里会让每次 /agui/run 都触发
+     * ModelRegistry "[primary] 被覆盖" 告警，刷屏。
+     */
+    @PostConstruct
+    public void initModelsOnce() {
+        AgentFactory.initModels();
+        log.info("[AguiConfig] models initialized");
+    }
+
+    /**
+     * 每个 threadId 一份独立的 FileSession (todos + memory)，直接复用
+     * Day 5 已落地的持久化机制——重启后从 data/sessions/&lt;threadId&gt;.json 恢复，
+     * 不会丢待办。
+     *
+     * lambda 入参 ctx 是 starter 提供的运行时上下文（含 threadId/runId/messages），
+     * 具体类型让 IDE 帮你补全；下面只用 ctx.threadId()。
      */
     @Bean
     public AguiAgentRegistryCustomizer aguiAgentRegistryCustomizer() {
         return registry -> registry.registerFactory("analyst", ctx -> {
-            // ctx 含 threadId / runId / 当前请求的 messages 等
-            TodoManager todos = todoManagerForThread(ctx.threadId());
-            Memory memory = memoryForThread(ctx.threadId());
+            String threadId = ctx.threadId();
+            FileSession session = FileSession.loadOrNew(threadId);
+            log.info("[AguiConfig] build agent for thread={}, todos={}",
+                    threadId, session.todos.size());
 
-            Toolkit toolkit = new Toolkit(ToolkitConfig.builder().parallel(true).build());
-            toolkit.registerTool(new FrontendCreateTools(todos));
-            toolkit.registerTool(new TodoQueryTools(todos));
-            toolkit.registerTool(new TodoUpdateTools(todos));
-            toolkit.registerTool(new SubmitTool(todos));
+            // 复用 Day 4/5 的同一段装配逻辑：Toolkit + analyst-with-tools.md system prompt
+            ReActAgent agent = AgentFactory.buildAnalystWithTools(session.todos, session.memory);
 
-            AgentFactory.initModels();
-            return ReActAgent.builder()
-                    .name("RequirementAnalyst")
-                    .sysPrompt(Prompts.analystMultiRound())
-                    .model(space.wlshow.scope.model.ModelRegistry
-                            .resolve(AgentFactory.DEFAULT_MODEL_ID))
-                    .toolkit(toolkit)
-                    .memory(memory)
-                    .maxIters(20)
-                    .build();
+            // shutdown 时把 session 落盘——Day 6 没接 STATE_DELTA，先用粗粒度兜底
+            Runtime.getRuntime().addShutdownHook(new Thread(session::save, "agui-save-" + threadId));
+            return agent;
         });
     }
-
-    // 简化版：用 ConcurrentHashMap 按 threadId 缓存
-    // Day 7 替换为 FileSession-backed 实现
-    private TodoManager todoManagerForThread(String threadId) {
-        return ThreadContext.todos(threadId);
-    }
-    private Memory memoryForThread(String threadId) {
-        return ThreadContext.memory(threadId);
-    }
 }
 ```
 
-### 5.3 简化的 `ThreadContext`
+> 📌 **不再需要 `ThreadContext` 临时缓存类**。`FileSession.loadOrNew(threadId)` 内部已经按 sessionId 缓存（详见 Day 5 课程），重复传同一个 threadId 拿回的是同一个实例，状态不会被覆盖。Day 6 这一步等于"把 Day 5 那套 session 机制原样接到 starter 的 thread 上"。
 
-```java
-package space.wlshow.scope.config;
+### 5.3 关于 session 持久化路径
 
-import io.agentscope.core.memory.InMemoryMemory;
-import io.agentscope.core.memory.Memory;
-import space.wlshow.scope.todo.TodoManager;
+`FileSession` 默认把数据落到 `data/sessions/<sessionId>.json`，threadId 由前端按 `'thread-' + Date.now()` 生成，所以每开一次浏览器就会新建一个 session 文件。如果你在 Phase 5 联调反复刷 5173，记得**定期清** `data/sessions/`（或者前端固定 `threadId` 做手工测试时复用同一个文件）。
 
-import java.util.concurrent.ConcurrentHashMap;
-
-/** Day 6 临时实现：按 threadId 缓存 TodoManager / Memory。Day 7 切到 FileSession。 */
-public final class ThreadContext {
-    private static final ConcurrentHashMap<String, TodoManager> TODOS = new ConcurrentHashMap<>();
-    private static final ConcurrentHashMap<String, Memory> MEMS = new ConcurrentHashMap<>();
-
-    public static TodoManager todos(String tid) {
-        return TODOS.computeIfAbsent(tid, k -> new TodoManager());
-    }
-    public static Memory memory(String tid) {
-        return MEMS.computeIfAbsent(tid, k -> new InMemoryMemory());
-    }
-    private ThreadContext() {}
-}
-```
-
-> 📌 `AguiAgentRegistryCustomizer` 的 lambda 入参（这里写作 `ctx`）的真实类型名因 starter 版本可能是 `RunAgentInputContext` / `AguiThreadContext`，按 IDE 提示对齐。
+> ⚠️ Day 6 没在 lambda 里做并发锁：同一个 threadId 同时跑两次 `/agui/run`（用户连点两下发送）时，`FileSession` 内的 `TodoManager` 会出现读-改-写竞态。Day 7 接 STATE_DELTA 时会一并加锁，本课先靠"前端 disable 发送按钮"绕开。
 
 ### 5.4 CORS 配置
 
@@ -383,7 +397,11 @@ public final class ThreadContext {
 public org.springframework.web.cors.reactive.CorsWebFilter corsWebFilter() {
     var cfg = new org.springframework.web.cors.CorsConfiguration();
     cfg.addAllowedOrigin("http://localhost:5173");
-    cfg.addAllowedMethod("*");
+    // Spring 6 / Servlet 6 起，allowCredentials=true 与 addAllowedMethod("*") 同时存在时
+    // 部分 Chrome 版本会拒，必须显式列方法
+    cfg.addAllowedMethod("GET");
+    cfg.addAllowedMethod("POST");
+    cfg.addAllowedMethod("OPTIONS");
     cfg.addAllowedHeader("*");
     cfg.setAllowCredentials(true);
 
@@ -392,6 +410,8 @@ public org.springframework.web.cors.reactive.CorsWebFilter corsWebFilter() {
     return new org.springframework.web.cors.reactive.CorsWebFilter(source);
 }
 ```
+
+> ⚠️ 别同时在 `application.yml` 里写 `agentscope.agui.cors.*`——Phase 2 一旦同时启用这两套，会出现"`Access-Control-Allow-Origin` 头被设两遍"的怪现象，Chrome 直接报 CORS error。本课只保留这一份 Bean。
 
 ### ✅ Phase 2 验收
 
@@ -402,6 +422,8 @@ public org.springframework.web.cors.reactive.CorsWebFilter corsWebFilter() {
 ---
 
 ## 6. Phase 3 · curl 验证 17 事件流（60 min）
+
+> 🪟 **Windows 前置**：本节所有命令假定在 **Git Bash** 里跑（不是 cmd / PowerShell）。`curl` 跟着 Git for Windows 自带；`jq` 需要单独装：`scoop install jq` 或 `choco install jq`。如果你跑在 WSL / macOS / Linux 上，原生支持，跳过这一段。
 
 ### 6.1 最小 RunAgentInput
 
@@ -450,30 +472,27 @@ curl -N -X POST http://localhost:8080/agui/run \
       { "id": "m1", "role": "user",
         "content": "做一个简单的员工档案管理，含姓名工号入职日期" }
     ]
-  }' | tee /tmp/agui-trace.log
+  }' | tee logs/agui-trace.log
 ```
 
 完事后用 jq 数一下每类事件：
 
 ```bash
-grep '^data:' /tmp/agui-trace.log | sed 's/^data: //' | jq -r '.type' | sort | uniq -c
+grep '^data:' logs/agui-trace.log | sed 's/^data: //' | jq -r '.type' | sort | uniq -c
 ```
 
-期望：
+期望（**类型齐不齐**是验收标准，数字仅供参考；模型不同次回复轮次会有偏差）：
 
 ```
-   1 RUN_STARTED
-   1 RUN_FINISHED
-   2 TEXT_MESSAGE_START
-  20 TEXT_MESSAGE_CONTENT
-   2 TEXT_MESSAGE_END
-   3 TOOL_CALL_START
-   ? TOOL_CALL_ARGS
-   3 TOOL_CALL_END
-   3 TOOL_CALL_RESULT
+   1 RUN_STARTED                       # 必有 1
+   1 RUN_FINISHED                      # 必有 1（或 RUN_ERROR）
+  ≥1 TEXT_MESSAGE_START / END 成对     # LLM 多段思考时会出现多对
+ ≥10 TEXT_MESSAGE_CONTENT              # 每个 token 一帧
+  ≥1 TOOL_CALL_START / END / RESULT    # 三件套必须一一对应
+  ≥1 TOOL_CALL_ARGS                    # 参数 JSON 流式片段
 ```
 
-> 📌 数字不重要，**类型齐不齐** 重要。如果完全没 TOOL_CALL_*，说明模型本身没真的调工具（看 LLM 是否被配置成了 stream + function calling 兼容形态；火山方舟需要 `stream(true)` 才会推 tool_call 增量）。
+> 📌 数字不重要，**类型齐不齐** 重要。如果完全没 TOOL_CALL_*，说明模型本身没真的调工具（看 LLM 是否被配置成了 stream + function calling 兼容形态；火山方舟需要 `stream(true)` 才会推 tool_call 增量）。`logs/` 目录已经在 `.gitignore` 里，trace 文件不会污染 git。
 
 ### 6.3 把事件流可视化（可选）
 
@@ -488,9 +507,20 @@ curl -sN -X POST "$1" \
   | jq -r '"\(.type)\t\(.delta // .toolName // .content // .messageId // "")"'
 ```
 
-跑：
+跑（先把 `fixtures/demo-input.json` 准备好——内容用 6.1 节那段 RunAgentInput 的 body 即可）：
 
 ```bash
+mkdir -p fixtures
+cat > fixtures/demo-input.json <<'JSON'
+{
+  "threadId": "t-demo-3",
+  "runId": "r-demo-3",
+  "messages": [
+    { "id": "m1", "role": "user", "content": "做一个员工档案管理，含姓名工号入职日期" }
+  ]
+}
+JSON
+
 ./scripts/agui-tail.sh http://localhost:8080/agui/run "$(cat fixtures/demo-input.json)"
 ```
 
@@ -543,7 +573,7 @@ npm install @ag-ui/client
   },
   "dependencies": {
     "vue": "^3.4.0",
-    "@ag-ui/client": "^0.0.x"
+    "@ag-ui/client": "latest"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.0.0",
@@ -554,7 +584,9 @@ npm install @ag-ui/client
 }
 ```
 
-> 📌 `@ag-ui/client` 的版本号请用 `npm view @ag-ui/client` 看最新稳定。如果你打开 npm 看到的是 0.x，那意味着 API 还没冻结，本课程的回调名按当下版本对齐即可（`onTextMessageContentEvent` 这种 camelCase 命名风格 0.x 系列稳定）。
+> 📌 `@ag-ui/client` 在 0.x 期 API **未冻结**，包名版本号每周可能变。本课为简便用 `"latest"`，`npm install` 会把当前最新版写进 `package-lock.json`——**这个 lock 必须 commit**，否则下次同事 install 拉到的版本可能跟你不一样。生产项目里则要换成具体版本号（先 `npm view @ag-ui/client version` 看一眼）。
+>
+> 📌 下面 7.5 节示例里用的事件回调名（`onTextMessageStartEvent` / `onTextMessageContentEvent` 等）对齐当下 `@ag-ui/client` 0.x。若安装后发现 IDE 提示这些方法不存在，先 `cat node_modules/@ag-ui/client/README.md` 或看 dist 的 `.d.ts`，按实际 API 调整——HttpAgent 在 0.x 期可能改成 EventEmitter 风格 `agent.on('TextMessageContent', cb)`。
 
 ### 7.3 加根目录 `frontend/.gitignore`
 
@@ -729,11 +761,12 @@ Response Headers:
 4. LLM 调工具的瞬间 Console 看到 `[ToolCall START] create_app tc1`
 5. 最终 LLM 总结流完后，光标消失
 
-如果你看到 Agent 回复是**一整段砸下来**（没流式效果）：
+如果你看到 Agent 回复是**一整段砸下来**（没流式效果），按下面顺序排查：
 
-- 模型未启用 stream：检查 `application.conf` / `ModelRegistry` 里 `OpenAIChatModel.builder().stream(true)`
-- starter 配置可能要 `agentscope.agui.streaming.enabled: true`
-- 浏览器在 prod 模式可能缓冲：dev 模式 vite proxy 这块通常 OK
+1. **模型 stream 没开**（最常见）：检查 `application.conf` / `ModelRegistry` 里 `OpenAIChatModel.builder().stream(true)`；火山方舟在 `stream(false)` 时压根不发增量
+2. **starter 没把 stream 透传**：看 starter 配置是否需要 `agentscope.agui.streaming.enabled: true`（具体 key 以 starter 版本为准）
+3. **反向代理缓冲**（本课直连不涉及，但部署到生产时会踩）：nginx 默认 `proxy_buffering on` 会把 SSE 攒到 buffer 满才下发；需要 `proxy_buffering off` + `X-Accel-Buffering: no`
+4. **DevTools Network 验证**：请求行右边类型应该是 `eventsource`，不是 `xhr`。如果是 xhr，说明前端 `@ag-ui/client` 走的不是 SSE 通道
 
 ### 8.3 录制 30 秒 GIF
 
@@ -755,18 +788,23 @@ Response Headers:
 ```bash
 git add pom.xml \
         src/main/java/space/wlshow/scope/ScopeApp.java \
-        src/main/java/space/wlshow/scope/config/ \
+        src/main/java/space/wlshow/scope/ScopeReplApp.java \
+        src/main/java/space/wlshow/scope/config/AguiAgentConfig.java \
         src/main/resources/application.yml \
-        frontend/ \
+        frontend/package.json frontend/package-lock.json \
+        frontend/index.html frontend/vite.config.ts frontend/tsconfig.json \
+        frontend/src/ frontend/.gitignore \
         scripts/agui-tail.sh \
         docs/screenshots/day6-*
 
+# 注意：frontend/node_modules/ 不入库（已在 .gitignore），但 package-lock.json 必须入库锁版本
+
 git commit -m "day6: AG-UI 协议集成（基础）
 
-- 引入 spring-boot-starter-webflux + agentscope-agui-spring-boot-starter 1.0.9
-- ScopeApp 转 Spring Boot 主类（CLI 入口移到 ScopeReplApp）
-- AguiAgentRegistryCustomizer 注册 analyst，每 threadId 独立 TodoManager/Memory
-- CorsWebFilter 放开 Vue3 dev origin 5173
+- 引入 spring-boot-starter-webflux + agentscope-agui-spring-boot-starter（跟 ${agentscope.version}）
+- ScopeApp 转 Spring Boot 主类，Day 5 的 CLI REPL 整体搬到 ScopeReplApp 备份
+- AguiAgentConfig: @PostConstruct 跑一次 initModels；registerFactory 按 threadId 复用 FileSession
+- CorsWebFilter 显式列 GET/POST/OPTIONS，放开 Vue3 dev origin 5173
 - frontend/ Vite + Vue3 + @ag-ui/client，订阅 TextMessage / ToolCall 事件流式渲染
 - scripts/agui-tail.sh + 截图存档"
 ```
@@ -813,14 +851,19 @@ npm run dev
 | 现象 | 原因 / 排查 |
 |------|------------|
 | `mvn spring-boot:run` 报 `BeanCurrentlyInCreationException` | 通常是 `AguiAgentRegistryCustomizer` 注入了循环依赖；把 lambda 内部用到的 bean 改成方法注入或者 `ObjectProvider` |
+| `Address already in use: bind` / 8080 起不来 | Windows 上 IIS 或其他 dev 进程占着；`netstat -ano | findstr 8080` 看 PID，`taskkill /PID <pid> /F` 或改 `server.port: 8081` |
 | 起得来但 `/agui/run` 404 | starter 没扫到；确认 `@SpringBootApplication` 的包能扫到 `io.agentscope.agui.spring`；启动日志 `Mapped` 行里搜 `agui` |
 | 起得来但 `/agui/run` POST 400 | RunAgentInput 反序列化失败；body 必须有 `threadId`/`runId`/`messages`；用本课 6.1 的 curl 模板 |
 | SSE 一次性全砸下来 | `curl` 没加 `-N`；浏览器看 Network 应该是逐帧的 |
 | `TOOL_CALL_*` 没事件 | 模型没真调工具：1) prompt 不引导 2) 模型版本不支持 function calling 3) stream 没开 |
-| Vue3 报 CORS | CorsWebFilter Bean 没注册；或路径模式不对；改成 `/**` 测试 |
+| Vue3 报 CORS | CorsWebFilter Bean 没注册；或路径模式不对；改成 `/**` 测试。**特别注意**：若 application.yml 也写了 `agentscope.agui.cors`，删掉 yml 那份只留 Bean |
+| 启动日志反复刷 `[primary] 被覆盖` | `AgentFactory.initModels()` 被放进了 lambda；按 5.2 节移到 `@PostConstruct` |
 | `npm install @ag-ui/client` 装不上 | Node 版本 < 18；用 `nvm use 20` |
 | Vue 端 `Cannot find module '@ag-ui/client'` | `tsconfig.json` 的 `moduleResolution` 用 `bundler` 或 `node16` |
+| Vue 端编译过了但 `agent.subscribe is not a function` | `@ag-ui/client` 版本 API 不一致；看 `node_modules/@ag-ui/client/dist/*.d.ts` 找真实方法签名 |
+| `Access-Control-Allow-Origin` 头出现两次 | application.yml 和 5.4 Bean 同时配了 CORS；二选一 |
 | 一连发 5 条消息后浏览器卡顿 | messages 数组无限增长；可以加上限或虚拟滚动，Day 7 优化 |
+| 反复刷新 5173 后 `data/sessions/` 越长越大 | 每次新 threadId 写一份 session 文件；手工测试时固定 `threadId = 'thread-dev'` 复用同一份 |
 
 ---
 
@@ -832,16 +875,28 @@ npm run dev
 @Configuration
 public class AguiAgentConfig {
 
+    // Memory / TodoManager 不是 Spring 自动 Bean，先用 @Bean 声明出来才能注入下面的 analyst
+    @Bean
+    public TodoManager globalTodos() {
+        return new TodoManager();
+    }
+
+    @Bean
+    public Memory globalMemory() {
+        return new InMemoryMemory();
+    }
+
     @Bean
     @AguiAgentId("analyst")
     public Agent analyst(TodoManager globalTodos, Memory globalMemory) {
+        AgentFactory.initModels();
         Toolkit toolkit = new Toolkit(ToolkitConfig.builder().parallel(true).build());
         toolkit.registerTool(new FrontendCreateTools(globalTodos));
-        // ...
+        // ... 其余工具同 Day 4 buildAnalystWithTools
         return ReActAgent.builder()
                 .name("RequirementAnalyst")
                 .sysPrompt(Prompts.analystMultiRound())
-                .model(...)
+                .model(ModelRegistry.resolve(AgentFactory.DEFAULT_MODEL_ID))
                 .toolkit(toolkit)
                 .memory(globalMemory)
                 .build();
@@ -849,7 +904,10 @@ public class AguiAgentConfig {
 }
 ```
 
-注意：这种写法**所有用户共用一个 Memory**，演示足够，真做项目不能这么搞。
+注意这种写法的两个坑：
+
+1. **所有用户共用一个 Memory / TodoManager**：一个浏览器开两个标签会互相串台。演示足够，真做项目不能这么搞——不同用户的待办池必须隔离，否则张三创建的"员工管理"会出现在李四的看板里
+2. **不复用 Day 5 的 `FileSession`**：重启进程后 Memory / Todos 全清空。要复用就回到 5.2 节的 `registerFactory` 写法
 
 ---
 
