@@ -1151,4 +1151,6 @@ Phase 4 / Phase 5 / Phase 6 之间互相 patch 时新增的小改动（descripti
 - 摸熟 **17 个 AG-UI 事件**：Lifecycle / TextMessage / ToolCall / State / Special
 - 起一个 **Vue3** 前端（Vite + `@ag-ui/client`），输入框敲入需求看到流式打字机回复
 
+> 📌 **关于 CLI**：Day 6 不会"删掉"今天写的 CLI REPL，而是把它整体复制到一个备份类 `ScopeReplApp.java`（同目录、不带 Spring 注解），让 Spring Boot 引导成为新默认。需要回到 CLI 调试时走 `mvn exec:java -Dexec.mainClass=...ScopeReplApp`。所以 `/run` / `/submit` / `/todos` / `handleSuspend` 这套代码不会丢——只是默认入口换了。
+
 Day 5 的 `ToolSuspend HITL` 在 Day 7 会被**重写**成 AG-UI 的 `TOOL_CALL_*` 事件 + 前端确认弹窗。今天的 CLI 实现是这套机制的"低保真原型"。
