@@ -7,9 +7,9 @@
 
 `agent-scope-app` 是一个基于 **AgentScope-Java 1.0.12** 的需求分析智能体**学习项目**，7 天路线图见 [docs/learning.md](docs/learning.md)。
 
-- **当前状态**：Day 3 已落地（REPL + JSON Schema 数据契约 + `RequirementParser` 3 次自纠错 + WireMock 离线回放）。Day 4 ~ Day 7 课程文档已就位，代码尚未落地
+- **当前状态**：Day 4 已落地（REPL + JSON Schema 数据契约 + `RequirementParser` 3 次自纠错 + WireMock 离线回放 + `TodoManager` 状态机 + `FrontendCreateTools` 三个 `@Tool`（含 Schema 兜底）+ `/run` 工具调度命令）。Day 5 ~ Day 7 课程文档已就位，代码尚未落地
 - **目标产物**：能把中文需求拆解为「应用 / 模块 / 数据模型」三层 JSON 结构、并通过 AG-UI 协议跟前端联调的 Agent
-- **教学性质**：每个 Day 的代码对应当天的学习目标，**不要**自作主张提前实现后续阶段的功能（如 Day 3 阶段不接 Toolkit / Memory / Spring Boot）
+- **教学性质**：每个 Day 的代码对应当天的学习目标，**不要**自作主张提前实现后续阶段的功能（如 Day 4 阶段不接 Memory / Session / Spring Boot）
 
 ## 2. 技术栈
 
@@ -24,29 +24,36 @@
 | 日志 | logback 1.5.6 + SLF4J |
 | 配置 | Typesafe Config 1.4.3（HOCON 格式） |
 | JSON | Jackson 2.17.0（databind + jsr310） |
-| Schema 校验 | networknt json-schema-validator 1.4.0（Draft 2020-12） |
+| Schema 校验 | networknt json-schema-validator 2.0.0（Draft 2020-12） |
 | 测试 | JUnit Jupiter 5.10.2 + WireMock 3.5.4 |
 
 ## 3. 目录约定
 
 ```
 src/main/java/space/wlshow/scope/
-├── ScopeApp.java               入口（REPL，含 /stream /parse 命令）
+├── ScopeApp.java               入口（REPL，含 /stream /parse /run 命令）
 ├── agent/                      Agent 构造、RequirementParser、ParseException
 ├── config/                     配置包装（AppConfig）
 ├── hook/                       钩子（PromptLengthHook 等）
 ├── model/                      AS-Java Model 注册表（ModelRegistry）
 ├── schema/                     JSON Schema 校验器 + ValidationError
 ├── spec/                       业务 POJO record（AnalysisResult / AppSpec / ModuleSpec / DataModelSpec / FieldSpec）
-└── util/                       Json（ObjectMapper 门面 + stripFence）、Prompts（classpath 加载）
+├── todo/                       Day 4：TodoStatus / TodoType / TodoItem / TodoChangeListener / TodoManager
+├── tool/                       Day 4：FrontendCreateTools（@Tool create_app/module/model + 工具内 Schema 兜底）
+└── util/                       Json（ObjectMapper 门面 + stripFence + readList）、Prompts（classpath 加载）
 
 src/main/resources/
 ├── application.conf            主配置（进 git）
 ├── application-local.conf      本地覆盖（gitignored）
 ├── logback.xml
-├── prompts/analyst.md          Day 3：需求解析 system prompt + few-shot
+├── prompts/
+│   ├── analyst.md              Day 3：需求解析 system prompt + few-shot
+│   └── analyst-with-tools.md   Day 4：工具调度 system prompt
 └── schemas/                    JSON Schema 文件
-    └── analysis-result.schema.json
+    ├── analysis-result.schema.json
+    ├── app-spec.schema.json    Day 4：工具内 APP_VAL
+    ├── module-spec.schema.json Day 4：工具内 MODULE_VAL
+    └── data-model-spec.schema.json  Day 4：工具内 MODEL_VAL（含递归 FieldSpec $defs）
 
 src/test/java/space/wlshow/scope/
 └── ...Test.java                JUnit 5 测试
@@ -56,7 +63,7 @@ src/test/resources/
 └── wiremock/__files/           Day 1/3：LLM 响应 fixture（analyst-ok/bad-fence/missing-app）
 ```
 
-新增文件遵循以上分包。后续 Day 会扩展 `tool/`（Day 4 业务工具集）/ `todo/`（Day 4 TodoManager）/ `frontend/`（Day 6 AG-UI bridge）等子包——**按职责分**，不要全堆在根包；POJO 一律放 `spec/`，不要塞进 `model/`（那是 AS-Java Model 注册表的位置）。
+新增文件遵循以上分包。后续 Day 会扩展 `frontend/`（Day 6 AG-UI bridge）等子包——**按职责分**，不要全堆在根包；POJO 一律放 `spec/`，不要塞进 `model/`（那是 AS-Java Model 注册表的位置）。
 
 ### 3.1 课程文档命名规范
 
@@ -77,7 +84,7 @@ Day[两位数序号]_[文章标题].md
 | Day 1 | `Day01_项目骨架 + AS-Java Hello World.md` | ✅ 代码 + 文档 |
 | Day 2 | `Day02_数据契约 + JSON Schema 校验.md` | ✅ 代码 + 文档 |
 | Day 3 | `Day03_需求解析 + Structured Output.md` | ✅ 代码 + 文档 |
-| Day 4 | `Day04_TodoManager + 业务工具集.md` | 📘 仅文档 |
+| Day 4 | `Day04_TodoManager + 业务工具集.md` | ✅ 代码 + 文档 |
 | Day 5 | `Day05_多轮对话 + Memory 与 Session + HITL.md` | 📘 仅文档 |
 | Day 6 | `Day06_AG-UI 协议集成（基础）.md` | 📘 仅文档 |
 | Day 7 | `Day07_AG-UI 协议进阶 + 收尾验收.md` | 📘 仅文档 |
@@ -96,7 +103,7 @@ mvn -q test -Dtest=<TestClass>                     # 单跑某个测试类
 mvn -U dependency:resolve                          # 强制拉依赖
 ```
 
-REPL 命令：`/stream` 切换流式输出、`/parse <中文需求>` 走 `RequirementParser` 解析、`exit` 退出。
+REPL 命令：`/stream` 切换流式输出、`/parse <中文需求>` 走 `RequirementParser` 解析（Day 3 链路）、`/run <中文需求>` 走 `buildAnalystWithTools` 工具调度落 `TodoManager`（Day 4 链路）、`exit` 退出。
 
 ## 5. 配置与密钥
 
@@ -108,20 +115,24 @@ REPL 命令：`/stream` 切换流式输出、`/parse <中文需求>` 走 `Requir
 ## 6. 编码规范
 
 1. **包名一致性**：所有源码在 `space.wlshow.scope.*` 下；如需重命名，**所有出现处必须同步**——源码 `package` 声明、`logback.xml` 里 `<logger name="...">`、`pom.xml` 里 `<exec.mainClass>`
-2. **依赖只在当前 Day 的范围内增加**：当前（Day 3 阶段）已就位的依赖是 agentscope / logback / typesafe-config / jackson / networknt-json-schema-validator / junit / wiremock。在用户明确要求或路线图指出之前，**不要**提前加 Spring Boot、Reactor 测试库、`@ag-ui/client`、OpenTelemetry 等
+2. **依赖只在当前 Day 的范围内增加**：当前（Day 4 阶段）已就位的依赖是 agentscope / logback / typesafe-config / jackson / networknt-json-schema-validator / junit / wiremock。在用户明确要求或路线图指出之前，**不要**提前加 Spring Boot、Reactor 测试库、`@ag-ui/client`、OpenTelemetry 等
 3. **使用现有抽象**：
    - 模型实例通过 `ModelRegistry.register/resolve` 管理，不要在新代码里直接 `new OpenAIChatModel(...)`（测试除外）
-   - JSON 解析序列化走 `util.Json` 的静态方法，不要直接 `new ObjectMapper()`
+   - JSON 解析序列化走 `util.Json` 的静态方法，不要直接 `new ObjectMapper()`；`List<T>` 反序列化用 `Json.readList`
    - 加载 prompt / schema 走 `util.Prompts` / `SchemaValidator`，不要散落 `getResourceAsStream`
+   - 工具调度场景把 `TodoManager` 当唯一 sink，不要在 `@Tool` 方法里另起本地集合
 4. **Reactor 调用约定**：`agent.call(req)` 返回 `Mono<Msg>`，需 `.timeout(AppConfig.timeout()).block()` 才会真正执行；不要在 Reactor 线程内调 `.block()`
-5. **日志约定**：用户输入 `[USER]`、模型回复 `[BOT]` / `[BOT-STREAM]`、钩子 `[Hook]`、解析过程 `[Parse]`、Schema 校验 `[Schema]`；用 SLF4J 占位符 `log.info("x={}", v)`，不要字符串拼接
-6. **Schema 校验先行**：所有 LLM 输出落到业务 POJO 前必须过 `SchemaValidator`；不要在 Java 侧用正则修 LLM 输出，让 LLM 自己改（参考 `RequirementParser` 的重试链路）
-7. **中文注释允许**：本仓库面向中文学习者，Javadoc / 注释 / 日志文案用中文 OK
-8. **保留 logback `<charset>UTF-8</charset>`**：移除会导致 Windows 中文版控制台乱码
+5. **日志约定**：用户输入 `[USER]`、模型回复 `[BOT]` / `[BOT-STREAM]`、钩子 `[Hook]`、解析过程 `[Parse]`、Schema 校验 `[Schema]`、工具调用 `[Tool]`、待办状态 `[Todo]`；用 SLF4J 占位符 `log.info("x={}", v)`，不要字符串拼接
+6. **Schema 校验先行**：所有 LLM 输出落到业务 POJO 前必须过 `SchemaValidator`；不要在 Java 侧用正则修 LLM 输出，让 LLM 自己改。两条参考链路：
+   - `RequirementParser` 走"回灌错误回 LLM 重试"，最多 3 次
+   - `FrontendCreateTools` 走"返回 `ERROR: ...` 字符串让 LLM 重调工具"，**不**落 TodoManager 脏数据
+7. **TodoManager 状态机不许绕开**：`PENDING → SUCCESS` / `SUCCESS|FAILED → 任何` / `RUNNING → PENDING` 都是非法迁移，由 `transit()` 抛 `IllegalStateException`；如有重试需求，应创建新的 TodoItem 而不是回退状态
+8. **中文注释允许**：本仓库面向中文学习者，Javadoc / 注释 / 日志文案用中文 OK
+9. **保留 logback `<charset>UTF-8</charset>`**：移除会导致 Windows 中文版控制台乱码
 
 ## 7. 测试要求
 
-当前测试套件（7 个测试类）：
+当前测试套件（10 个测试类，离线共 36 个测试）：
 
 | 测试类 | 覆盖 |
 |---|---|
@@ -132,6 +143,9 @@ REPL 命令：`/stream` 切换流式输出、`/parse <中文需求>` 走 `Requir
 | `util.JsonStripFenceTest` | Day 3：5 种 fence/寒暄 |
 | `agent.RequirementParserMockTest` | Day 3：4 个离线场景（ok / fence / 缺字段重试 / 3 次放弃） |
 | `agent.RequirementParserLiveTest` | Day 3：3 个真实 LLM 场景，**`@Tag("live")` 默认跳过** |
+| `todo.TodoItemTest` | Day 4：3 个用例（newPending / withStatus 不回退 / 终态枚举） |
+| `todo.TodoManagerTest` | Day 4：7 个用例（增删 / 正常迁移 / 拒收 / 监听器 / state roundtrip） |
+| `tool.FrontendCreateToolsTest` | Day 4：4 个用例（happy-path / fieldsJson 解析 / fieldsJson 异常 / Schema 拒收中文 name） |
 
 规则：
 
@@ -164,7 +178,8 @@ test(schema): 补充 schema-samples 覆盖递归字段
 | Day 1 步骤 / 命令 / 故障排查 | [Day01 课程文档](<docs/lessons/Day01_项目骨架 + AS-Java Hello World.md>) |
 | Day 2：POJO / JSON Schema | [Day02 课程文档](<docs/lessons/Day02_数据契约 + JSON Schema 校验.md>) |
 | Day 3：prompt 设计 / 自纠错 / WireMock 离线回放 | [Day03 课程文档](<docs/lessons/Day03_需求解析 + Structured Output.md>) |
-| Day 4 ~ Day 7（尚未落地） | 对应 `docs/lessons/Day0N_*.md`，落地前请先读再动代码 |
+| Day 4：TodoManager 状态机 / `@Tool` / Toolkit / 工具内 Schema 兜底 | [Day04 课程文档](<docs/lessons/Day04_TodoManager + 业务工具集.md>) |
+| Day 5 ~ Day 7（尚未落地） | 对应 `docs/lessons/Day0N_*.md`，落地前请先读再动代码 |
 | 启动/配置/环境变量问题 | [README.md](README.md) |
 
 回答"AS-Java 怎么用 X"类问题时，**先查 `docs/agents/` 对应章节再回答**，不要凭空生成 API。
@@ -199,11 +214,15 @@ AS-Java 官方提供两份 LLM-readable 文档供 AI 编程助手消费：
 | `[Parse] LLM 输出连续 3 次不符合 schema` | prompt 漂移或 schema 过严；用 `SchemaValidatorTest` 拿同一份 JSON 跑一遍定位 |
 | live 测试莫名 skip | `@EnabledIfEnvironmentVariable` 未通过；IDE 跑 test 时环境变量未透传，改命令行 `mvn -Dgroups=live test` |
 | WireMock 测试 404 | `usingFilesUnderClasspath("wiremock")` 路径错；确认 `src/test/resources/wiremock/__files/` 存在 |
+| `/run` 时 LLM 不调工具直接吐 JSON | system prompt 没生效或模型不支持 function calling；确认 `buildAnalystWithTools` 真用了 `Prompts.analystWithTools()` |
+| `/run` 调了工具但 TodoManager 是空的 | `Toolkit.registerTool` 没注入同一个 `TodoManager` 实例（`ScopeApp.todos` 与 `analystWithTools` 必须同源） |
+| `[Tool] create_* rejected` 而 LLM 不重试 | `maxIters` 用尽 / 模型不消化 ERROR 文案；调高 `buildAnalystWithTools` 的 `maxIters` 或精简 schema 错误措辞 |
+| `IllegalStateException: 终态不可迁移` | 状态机重复 mark；Day 4 内只 `add` 不 `mark`，Day 5/6 才会触发 |
 
 ## 11. 操作边界
 
-- **不要**为了"补完整"提前实现路线图后续 Day 的功能（如 Day 3 阶段加 Toolkit、Day 5 阶段加 Spring Boot 等）
+- **不要**为了"补完整"提前实现路线图后续 Day 的功能（如 Day 4 阶段加 Memory、Day 5 阶段加 Spring Boot 等）
 - **不要**删除 `docs/` 目录下的任何课程文档
 - **不要**修改 `.gitignore` 里对 `application-local.conf` 和 AI 工具缓存目录（`.claude/` `.cursor/` 等）的排除
 - 修改 `application.conf` 默认值前先确认是否应该改到 `application-local.conf`
-- 改 `spec/` 下任何 record 字段时必须同步 `resources/schemas/analysis-result.schema.json` 与 `prompts/analyst.md`，三处保持一致
+- 改 `spec/` 下任何 record 字段时必须**同步四处**：`resources/schemas/analysis-result.schema.json`、`resources/schemas/{app,module,data-model}-spec.schema.json`、`prompts/analyst.md` / `prompts/analyst-with-tools.md`、对应的 `FrontendCreateTools` `@ToolParam` 注解

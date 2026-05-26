@@ -1,8 +1,10 @@
-# Day 5 · 多轮对话 + Memory 与 Session + HITL
+# Day 5 · 多轮对话 + Memory 与 Session 持久化 + HITL
 
 > 上级文档：[../learning.md](../learning.md)
 > 配套笔记：[../agents/06-memory-state-session.md](../agents/06-memory-state-session.md) · [../agents/04-tool-system.md § 工具挂起](../agents/04-tool-system.md) · [../agents/10-observability-hitl.md](../agents/10-observability-hitl.md)
 > 前置：[Day 4 · TodoManager + 业务工具集](<Day04_TodoManager + 业务工具集.md>) 已完成
+
+> 📌 关于命名：本课用**自写的 `FileSession`** 完成会话持久化（只持久化 `TodoManager`；Memory 重启后从空起，理由见附录 A）。AS-Java 自带的 `Session / JsonSession` 抽象不直接使用，原因同附录 A。
 
 ## 0. 一句话目标
 
@@ -100,9 +102,28 @@ if (out.getGenerateReason() == GenerateReason.TOOL_SUSPENDED) {
 }
 ```
 
-> ⚠️ **版本敏感**：`ToolSuspendException` / `GenerateReason.TOOL_SUSPENDED` 这些 API 名称在 AS-Java 1.0.x 和 1.1.x 之间可能微调，跑不通时先 `grep` 一遍 `agentscope-1.0.12-sources.jar`，本课程以 1.0.12 为基线。
+> ⚠️ **版本敏感**：`ToolSuspendException` / `GenerateReason.TOOL_SUSPENDED` 这些 API 名称在 AS-Java 1.0.x 和 1.1.x 之间可能微调。**Phase 0 必做**：先把这两个名字在 1.0.12 sources jar 里 grep 一遍确认：
+>
+> ```bash
+> mvn -q dependency:sources
+> # Linux/macOS
+> jar -tf ~/.m2/repository/io/agentscope/agentscope/1.0.12/agentscope-1.0.12-sources.jar \
+>   | grep -E "ToolSuspend|GenerateReason"
+> # 或者用 IDE 在外部库里搜 "class ToolSuspendException"，记下它的真实包路径
+> ```
+>
+> 本课程示例代码里写的 `io.agentscope.core.exception.ToolSuspendException` 是占位，落地时按 jar 里的实际全限定名替换 import。
 
-### 3.4 预读链接
+### 3.4 `/submit` 命令 vs 自然语言"提交"
+
+Day 5 有两条触发提交的路径，**本质是一条**：
+
+- **CLI 路径**：用户敲 `/submit`，REPL 构造一条"请把所有待办下发前端"的用户消息给 LLM
+- **自然语言路径**：用户直接说"确认 / 提交 / 发布"，LLM 按 prompt 规则自行调 `submit_to_frontend(false)`
+
+两条路径在 Agent 视角下都是"LLM 决定调 submit_to_frontend"。`/submit` 只是把这条自然语言固定化、避免歧义。本课程的实现以 CLI 路径为主，自然语言路径靠 prompt 兼容。
+
+### 3.5 预读链接
 
 - [AS-Java Memory / State / Session](../agents/06-memory-state-session.md)
 - [AS-Java Tool 工具挂起](../agents/04-tool-system.md)
@@ -119,14 +140,20 @@ if (out.getGenerateReason() == GenerateReason.TOOL_SUSPENDED) {
 
 ### 4.1 给 `AgentFactory` 加 Memory
 
+> 📌 **按 Phase 顺序写**：Phase 1 时只有 `FrontendCreateTools`（Day 4 的），`TodoQueryTools / TodoUpdateTools` 是 Phase 2 新建、`SubmitTool` 是 Phase 4 新建。先把 `buildAnalystWithTools` 改成接受 Memory，再到对应 Phase 回来逐行加 `toolkit.registerTool(...)`。
+
+Phase 1 的最小改动（只加 Memory，工具注册保持 Day 4 原样）：
+
 ```java
 public static ReActAgent buildAnalystWithTools(TodoManager todos, Memory memory) {
     initModels();
     Toolkit toolkit = new Toolkit(ToolkitConfig.builder().parallel(true).build());
     toolkit.registerTool(new FrontendCreateTools(todos));
-    toolkit.registerTool(new TodoQueryTools(todos));         // Phase 2 新增
-    toolkit.registerTool(new TodoUpdateTools(todos));        // Phase 2 新增
-    toolkit.registerTool(new SubmitTool(todos));             // Phase 4 新增
+    // Phase 2 完成后回来加：
+    // toolkit.registerTool(new TodoQueryTools(todos));
+    // toolkit.registerTool(new TodoUpdateTools(todos));
+    // Phase 4 完成后回来加：
+    // toolkit.registerTool(new SubmitTool(todos));
 
     return ReActAgent.builder()
             .name("RequirementAnalyst")
@@ -137,6 +164,15 @@ public static ReActAgent buildAnalystWithTools(TodoManager todos, Memory memory)
             .maxIters(20)
             .build();
 }
+```
+
+Phase 4 结束时这个方法的最终形态：
+
+```java
+toolkit.registerTool(new FrontendCreateTools(todos));
+toolkit.registerTool(new TodoQueryTools(todos));
+toolkit.registerTool(new TodoUpdateTools(todos));
+toolkit.registerTool(new SubmitTool(todos));
 ```
 
 在 REPL 启动时构造 Memory，并复用同一个实例多次 `/run`：
@@ -247,6 +283,8 @@ public class TodoQueryTools {
 
 ### 5.2 `TodoUpdateTools.java`
 
+> 📌 **沿用 Day 4 的 Schema 兜底模式**：修改后的 payload 必须再过一次 `module-spec.schema.json` / `data-model-spec.schema.json`，校验失败返回 `ERROR: ...` 给 LLM，**不**写入 TodoManager。复用 Day 4 `FrontendCreateTools` 的 `validate(SchemaValidator, JsonNode, String)` 私有方法范式即可。
+
 ```java
 package space.wlshow.scope.tool;
 
@@ -254,6 +292,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.agentscope.core.tool.Tool;
 import io.agentscope.core.tool.ToolParam;
+import space.wlshow.scope.schema.SchemaValidator;
+import space.wlshow.scope.schema.ValidationError;
 import space.wlshow.scope.spec.FieldSpec;
 import space.wlshow.scope.todo.TodoItem;
 import space.wlshow.scope.todo.TodoManager;
@@ -265,6 +305,11 @@ import java.util.List;
 import java.util.Optional;
 
 public class TodoUpdateTools {
+
+    private static final SchemaValidator MODULE_VAL =
+            new SchemaValidator("/schemas/module-spec.schema.json");
+    private static final SchemaValidator MODEL_VAL =
+            new SchemaValidator("/schemas/data-model-spec.schema.json");
 
     private final TodoManager todos;
 
@@ -290,9 +335,10 @@ public class TodoUpdateTools {
         if (newModuleName != null && !newModuleName.isBlank()) p.put("moduleName", newModuleName);
         if (newModuleDesc != null && !newModuleDesc.isBlank()) p.put("moduleDesc", newModuleDesc);
 
-        // TodoManager 没暴露"原地改 payload"接口，直接重建 record
-        // 这里只是 demo，正式做法是给 TodoManager 加 updatePayload(id, newPayload)
-        replacePayload(it, p);
+        String err = validate(MODULE_VAL, p, "update_module");
+        if (err != null) return err;
+
+        todos.replacePayload(it.id(), p);
         return "MODULE 已更新：" + it.id();
     }
 
@@ -316,14 +362,20 @@ public class TodoUpdateTools {
         var arr = (com.fasterxml.jackson.databind.node.ArrayNode) p.get("fields");
         appended.forEach(f -> arr.add(Json.mapper().valueToTree(f)));
 
-        replacePayload(it, p);
+        String err = validate(MODEL_VAL, p, "update_model");
+        if (err != null) return err;
+
+        todos.replacePayload(it.id(), p);
         return "MODEL 已追加 " + appended.size() + " 个字段到 " + it.id();
     }
 
-    private void replacePayload(TodoItem it, JsonNode newPayload) {
-        // 简化实现：在 TodoManager 上加一个 setPayload，或者重建 item
-        // 见 TodoManager 的修改（下面 5.3）
-        todos.replacePayload(it.id(), newPayload);
+    /** 与 FrontendCreateTools.validate 同形：合规返回 null，否则返回 "ERROR: ..." 字符串。 */
+    private static String validate(SchemaValidator v, JsonNode payload, String tool) {
+        List<String> errors = v.validate(payload).stream()
+                .map(ValidationError::message)
+                .toList();
+        if (errors.isEmpty()) return null;
+        return "ERROR: 参数不合规：" + String.join("; ", errors);
     }
 
     private Optional<TodoItem> findByModuleId(String moduleId) {
@@ -342,7 +394,18 @@ public class TodoUpdateTools {
 }
 ```
 
-### 5.3 `TodoManager` 加 `replacePayload`
+### 5.3 `TodoItem.withPayload` + `TodoManager.replacePayload`
+
+为了对称 Day 4 已经定下的 `withStatus(...)` record 工厂模式，先在 `TodoItem` 上加一个 `withPayload`：
+
+```java
+public TodoItem withPayload(JsonNode newPayload) {
+    return new TodoItem(id, type, targetName, newPayload, status, errorMessage,
+            createdAt, Instant.now());
+}
+```
+
+`TodoManager` 暴露 `replacePayload`，复用 `withPayload`：
 
 ```java
 public void replacePayload(String id, JsonNode newPayload) {
@@ -350,13 +413,13 @@ public void replacePayload(String id, JsonNode newPayload) {
     if (cur.status() != TodoStatus.PENDING) {
         throw new IllegalStateException("非 PENDING 不可改 payload: " + id);
     }
-    TodoItem next = new TodoItem(
-            cur.id(), cur.type(), cur.targetName(), newPayload,
-            cur.status(), cur.errorMessage(), cur.createdAt(), java.time.Instant.now());
+    TodoItem next = cur.withPayload(newPayload);
     items.put(id, next);
     log.info("[Todo] PAYLOAD-REPLACE id={}", id);
 }
 ```
+
+> 📌 双重检查并不冗余：`TodoUpdateTools` 里的 `status != PENDING` 检查是为了给 LLM 返回友好的 `ERROR: ...` 触发自纠错；`TodoManager.replacePayload` 的检查是底线防御（外部直接调也安全）。两层各司其职。
 
 ### 5.4 验证
 
@@ -381,9 +444,13 @@ public void replacePayload(String id, JsonNode newPayload) {
 
 ### 6.1 设计选型
 
-Day 5 我们走**最简实现**：手写 `FileSession`，把 `TodoManager.getState()` 和 Memory 的消息列表序列化到 `data/sessions/<id>.json`。AS-Java 自带的 `JsonSession` API 在 1.0.12 偶有签名变化，不如自写一份稳。
+Day 5 走**最简实现**：手写 `FileSession`，只把 `TodoManager.getState()` 序列化到 `data/sessions/<id>.json`。理由：
 
-> 📌 如果你想用 AS-Java 自带的 `Session`，看 [../agents/06-memory-state-session.md](../agents/06-memory-state-session.md)，原理一致，本课不强制。
+1. **AS-Java 自带的 `JsonSession` API 跨 patch 版本签名不稳**，自写 30 行更可控
+2. **Memory 不持久化** ——`Msg` 是含 `ContentBlock` 多态字段的密封类型，用 Jackson 直接 `readList` 容易踩反序列化坑（不同版本字段差异大）。本课程的策略是：**进程重启后 Memory 从空起，但 TodoManager 保留**——用户重启再进来时，LLM 第一句话先调 `list_todos` 看现状即可补上"上下文"。这套策略已经在 `analyst-multi-round.md` 的"第二轮起必须 list_todos"规则里覆盖了。
+3. Day 7 升级到 Harness Compaction 时反正要重写，没必要今天叠两层抽象
+
+> 📌 如果你想用 AS-Java 自带的 `Session`，看 [../agents/06-memory-state-session.md](../agents/06-memory-state-session.md)，原理一致，本课不强制。如果想连 Memory 也持久化，参考附录 A 的扩展说明。
 
 ### 6.2 `session/FileSession.java`
 
@@ -394,7 +461,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.agentscope.core.memory.InMemoryMemory;
 import io.agentscope.core.memory.Memory;
-import io.agentscope.core.message.Msg;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import space.wlshow.scope.todo.TodoManager;
@@ -403,8 +469,11 @@ import space.wlshow.scope.util.Json;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.List;
 
+/**
+ * 单文件会话：只持久化 TodoManager，Memory 每次进程启动从空开始。
+ * 重启后 LLM 第一句话需要调 list_todos 看现状（已在 prompt 里约束）。
+ */
 public class FileSession {
 
     private static final Logger log = LoggerFactory.getLogger(FileSession.class);
@@ -412,7 +481,7 @@ public class FileSession {
 
     public final String id;
     public final TodoManager todos;
-    public final Memory memory;
+    public final Memory memory;          // 每次新建，重启后从空起
 
     public FileSession(String id, TodoManager todos, Memory memory) {
         this.id = id;
@@ -428,9 +497,7 @@ public class FileSession {
             try {
                 JsonNode root = Json.tree(Files.newInputStream(f));
                 todos.loadState(root.path("todos"));
-                List<Msg> msgs = Json.readList(root.path("memory").toString(), Msg.class);
-                msgs.forEach(memory::add);
-                log.info("[Session] LOAD {} todos={} memory={}", id, todos.size(), msgs.size());
+                log.info("[Session] LOAD {} todos={}", id, todos.size());
             } catch (IOException e) {
                 throw new IllegalStateException("Session 加载失败: " + f, e);
             }
@@ -445,7 +512,6 @@ public class FileSession {
             Files.createDirectories(BASE);
             ObjectNode root = Json.mapper().createObjectNode();
             root.set("todos", todos.getState());
-            root.set("memory", Json.mapper().valueToTree(memory.getMessages()));
             Path f = BASE.resolve(id + ".json");
             Files.writeString(f, Json.writePretty(root));
             log.info("[Session] SAVED {} -> {}", id, f);
@@ -456,8 +522,6 @@ public class FileSession {
 }
 ```
 
-> ⚠️ `memory.getMessages()` 的方法名在不同 AS-Java 版本可能是 `getHistory()` / `messages()`，按你 jar 里实际签名替换。
-
 ### 6.3 REPL 改造
 
 ```java
@@ -465,10 +529,18 @@ String sessionId = System.getenv().getOrDefault("SCOPE_SESSION", "default");
 FileSession session = FileSession.loadOrNew(sessionId);
 ReActAgent analyst = AgentFactory.buildAnalystWithTools(session.todos, session.memory);
 
-// 每次 /run 或 /submit 之后自动 save
-// 注册 shutdown hook 兜底
+// 1. 每个改动状态的命令完成后 inline save，避免崩溃丢数据
+// 2. shutdown hook 兜底（正常 exit 走到这里；kill -9 不会走，所以 inline 是主路径）
 Runtime.getRuntime().addShutdownHook(new Thread(session::save));
 ```
+
+在 `/run` 处理段末尾、`/submit` 处理段末尾分别加：
+
+```java
+session.save();
+```
+
+> 📌 `inline save` 是主路径，`shutdown hook` 只是兜底（`kill -9` 不会触发）。教学上要让学习者明白两者各自的作用。
 
 ### 6.4 加 `.gitignore`
 
@@ -479,19 +551,31 @@ data/sessions/
 ### 6.5 验证
 
 ```bash
+# 1. 默认 session 跑一次后重启
 mvn -q compile exec:java
 > /run 做一个员工档案
-> exit         （退出，shutdown hook 触发 save）
+> exit            # 退出走正常路径，shutdown hook 触发 save；但 /run 末尾的 inline save 已经写过文件了
 
 # 另一个终端
-ls data/sessions/  # default.json 在
+ls data/sessions/        # 看到 default.json
+cat data/sessions/default.json | head -30
 
+# 2. 重启同 session，TodoManager 应保留
 mvn -q compile exec:java
-> /todos       （新加一个命令直接查）
-=== Todos (3) ===   ← 之前的还在
+> /todos
+=== Todos (3) ===            ← 之前的还在
+
+# 3. 切到另一个 sessionId，应该是空的
+SCOPE_SESSION=alice mvn -q compile exec:java
+> /todos
+=== Todos (0) ===            ← 与 default 完全隔离
+> /run 做一个请假管理
+> exit
+
+ls data/sessions/        # 现在看到 default.json + alice.json
 ```
 
-> 📌 加一个 `/todos` 命令方便不调 LLM 直接看：
+> 📌 `/todos` 是个不调 LLM 的快捷命令，方便排查 session 加载情况：
 
 ```java
 } else if (line.equals("/todos")) {
@@ -572,11 +656,14 @@ public class SubmitTool {
             throw new ToolSuspendException("AWAITING_USER_CONFIRMATION\n" + summary);
         }
 
-        // confirmed=true：真发（Day 5 dry-run，只是把状态 RUNNING→SUCCESS 跑一遍）
+        // confirmed=true：真发（Day 5 dry-run，只是把状态机走一遍）
+        // Day 4 设计意图：RUNNING 表示"工具下发中"。Day 6 接前端后，markRunning 和
+        // markSuccess 之间会插入实际 SSE 下发 + 等待前端 ACK 的逻辑；
+        // 本日 dry-run 直接顺一遍只为把状态机跑通。
         int n = 0;
         for (TodoItem it : pending) {
             todos.markRunning(it.id());
-            // TODO Day 6：换成 bridge.dispatch(it)
+            // TODO Day 6：换成 bridge.dispatch(it).block() 后再 markSuccess
             todos.markSuccess(it.id());
             n++;
         }
@@ -604,62 +691,68 @@ public class SubmitTool {
 
 ```java
 } else if (line.equals("/submit")) {
-    runSubmit(analyst, session);
+    runSubmit(analyst, session, sc);   // sc 是 main 里已存在的 Scanner 实例
     continue;
 }
 ```
 
+> ⚠️ **必须共用 main 里那一个 `Scanner`**，不要在 `runSubmit` 内 `new Scanner(System.in)`——两个 Scanner 抢同一个 `System.in` 缓冲区，Windows 下经常表现为"按 y 没反应 / 多吞一行"。
+
 `runSubmit` 的实现（简化版，把 ToolSuspend 处理封装一处）：
 
 ```java
-private static void runSubmit(ReActAgent agent, FileSession session) {
+private static void runSubmit(ReActAgent agent, FileSession session, Scanner sc) {
     // 让 LLM 自己决定调 submit_to_frontend(false)
+    // 注意文案：用"请把所有待办下发前端"而不是"我确认了"，避免 LLM 直接走 confirmed=true 跳过挂起
     Msg out;
     try {
-        out = agent.call(Msg.builder()
-                .role(MsgRole.USER)
-                .content(TextBlock.builder().text("我确认了，请提交所有待办").build())
-                .build()).block();
+        out = agent.call(Msg.builder().textContent("请把所有待办下发前端").build())
+                .timeout(AppConfig.timeout()).block();
     } catch (Exception e) {
         // 不同版本 AS-Java 暴露 suspend 的方式不同，可能是异常也可能是 GenerateReason
         if (!isSuspend(e)) throw e;
-        handleSuspend(agent, session, suspendMessage(e));
+        handleSuspend(agent, session, sc, suspendMessage(e));
         return;
     }
 
     if (out != null && isSuspendOutput(out)) {
         String reason = suspendReason(out);
-        handleSuspend(agent, session, reason);
+        handleSuspend(agent, session, sc, reason);
     } else {
         System.out.println("[ASSISTANT] " + (out == null ? "" : out.getTextContent()));
     }
+    session.save();
 }
 
-private static void handleSuspend(ReActAgent agent, FileSession session, String reason) {
+private static void handleSuspend(ReActAgent agent, FileSession session, Scanner sc, String reason) {
     System.out.println("[CONFIRM?]");
     System.out.println(reason);
     System.out.print("确认下发？(y/N): ");
-    String ans = new java.util.Scanner(System.in).nextLine().trim().toLowerCase();
+    String ans = sc.nextLine().trim().toLowerCase();   // 复用外层 Scanner
     String reply = "y".equals(ans) || "yes".equals(ans) ? "USER_CONFIRMED" : "USER_REJECTED";
 
     // 拿到挂起的 ToolUseBlock id（不同版本 API 略不同）
-    String toolUseId = lastToolUseId(agent);   // 你的工具方法
+    String toolUseId = lastToolUseId(agent);
 
+    // 回填 ToolResult：这里 builder 长形式无法回避，因为要构造 ToolResultBlock
     Msg toolResultMsg = Msg.builder()
             .role(MsgRole.TOOL)
             .content(ToolResultBlock.of(toolUseId, "submit_to_frontend",
                     TextBlock.builder().text(reply).build()))
             .build();
 
-    Msg out = agent.call(toolResultMsg).block();
+    Msg out = agent.call(toolResultMsg).timeout(AppConfig.timeout()).block();
     System.out.println("[ASSISTANT] " + (out == null ? "" : out.getTextContent()));
     System.out.println("=== Todos (" + session.todos.size() + ") ===");
     session.todos.snapshot().forEach(it -> System.out.printf("  %s  %-25s  %s%n",
             it.id(), it.targetName(), it.status()));
+    session.save();
 }
 ```
 
-> 📌 `lastToolUseId(agent)` / `isSuspend(e)` / `suspendReason(out)` 这些工具方法**根据你 AS-Java 1.0.12 的实际 API** 写。本课程不锁死签名，主要让你看清流程。如果你 jar 里能直接读到 `GenerateReason.TOOL_SUSPENDED` + `ToolUseBlock.id`，直接走那条路。
+> 📌 几点关键约定，需对照仓库现状：
+> - **`Msg` 短/长形式**：仓库主路径（`ScopeApp.java`、`WireMockAgentTest`）用 `Msg.builder().textContent(...).build()`；这里回填 `ToolResultBlock` 时不得不走长形式 `role(...).content(...).build()`，是 builder 风格不同**不是** API 不同
+> - **`lastToolUseId(agent)` / `isSuspend(e)` / `suspendReason(out)`** 这些工具方法**根据你 AS-Java 1.0.12 的实际 API** 写。本课程不锁死签名，主要让你看清流程。如果你 jar 里能直接读到 `GenerateReason.TOOL_SUSPENDED` + `ToolUseBlock.id`，直接走那条路
 
 ### 8.2 跑一遍
 
@@ -706,48 +799,41 @@ AWAITING_USER_CONFIRMATION
 
 ### 9.1 剧本回归测试
 
-新建 `src/test/java/space/wlshow/scope/agent/Day5ScenarioTest.java`，用 WireMock 录一组响应（**3 段 LLM 输出**）：
+> ⚠️ **本节是设计指引，不是可直接 copy-paste 的代码**。Day 5 涉及 ToolSuspend、ToolUseBlock id 回填等版本敏感 API，端到端测试很难脱离实际 jar 给出稳定代码。下面只列**测试场景设计**，具体实现请按你跑通的 8.1 代码补 facade。
 
-1. 第一轮 "做库存管理"：返回多个 tool_calls（create_app + 2 create_module + 2 create_model）
-2. 第二轮 "加出库审批"：返回 list_todos + 1 create_module + 1 create_model
-3. 提交：返回 submit_to_frontend(false)
-4. 收到 USER_CONFIRMED 续跑：返回 submit_to_frontend(true)
+**目标**：用 WireMock 录一组 LLM 响应（4 段），驱动以下场景：
 
-> 📌 录的 mock 是 LLM 输出，**TodoManager 状态由我们自己的工具代码控制**，断言验的是状态机和 TodoManager 数量。
+| 场景 | LLM 输出 | 验收 |
+|------|----------|------|
+| 第一轮"做库存管理" | 多个 tool_calls：`create_app` + 2× `create_module` + 2× `create_model` | `todos.size() == 5`，全 PENDING |
+| 第二轮"加出库审批" | `list_todos` + 1× `create_module` + 1× `create_model` | `todos.size() == 7`，原 5 项不动 |
+| /submit 第一次 | `submit_to_frontend(confirmed=false)` | 触发 suspend，状态全 PENDING |
+| 回填 USER_CONFIRMED | `submit_to_frontend(confirmed=true)` | 全部 → SUCCESS |
+| 回填 USER_REJECTED 路径 | LLM 1 句话告知取消 | 状态保持 PENDING |
+
+**测试骨架**（伪 facade，仅示意结构）：
 
 ```java
 @Test
-void fullScenario_addThenAppendThenConfirm() {
-    // 加载 wiremock mappings/ 下的 4 个 stub
-    server.loadMappingsUsing(...);
-
-    // 第一轮
-    parser.run("做一个库存管理系统");
-    assertEquals(5, session.todos.size());
-
-    // 第二轮
-    parser.run("再加个出库审批");
-    assertEquals(7, session.todos.size());
-    assertTrue(session.todos.snapshot().stream()
-            .allMatch(it -> it.status() == TodoStatus.PENDING));
-
-    // 提交
-    parser.submit("y");
-    assertTrue(session.todos.snapshot().stream()
-            .allMatch(it -> it.status() == TodoStatus.SUCCESS));
+void fullScenario_addThenAppendThenConfirm() throws Exception {
+    // 1. 起 WireMock，加载 src/test/resources/wiremock/__files/day5-*.json 四份 stub
+    // 2. 构造 FileSession (tmp 目录)，buildAnalystWithTools(session.todos, session.memory)
+    // 3. 调 agent.call(Msg.builder().textContent("做一个库存管理系统").build()).block()
+    //    断言：session.todos.size() == 5
+    // 4. 同一个 agent 再 call("再加个出库审批")
+    //    断言：session.todos.size() == 7、原 5 项 status 不变
+    // 5. 触发 /submit 链路（参考 8.1 的 runSubmit），用 USER_CONFIRMED 回填
+    //    断言：所有项 → SUCCESS
 }
 
 @Test
 void rejectConfirm_keepsPending() {
-    server.loadMappingsUsing(...);
-    parser.run("做一个员工档案");
-    parser.submit("n");
-    assertTrue(session.todos.snapshot().stream()
-            .allMatch(it -> it.status() == TodoStatus.PENDING));
+    // 同上前 3 步；回填 USER_REJECTED
+    // 断言：所有项保持 PENDING
 }
 ```
 
-> 📌 把 `parser.run` / `parser.submit` 封装成测试用的 facade，避免每个测试都重复 Msg 构造。
+> 📌 **录 mock 的关键**：录的是 LLM 的 tool_calls 输出，**TodoManager 状态由我们自己的工具代码控制**，断言验的是状态机和 TodoManager 数量。WireMock 端只需把 `/chat/completions` 的响应按调用次序串起来即可，参考 Day 3 `RequirementParserMockTest` 的 stub 顺序写法。
 
 ### 9.2 跨进程持久化测试
 
@@ -766,23 +852,30 @@ void afterRestart_todosRecovered() {
 
 ### 9.3 commit
 
+> 📌 列具体文件、不要整目录 `git add`：`src/main/java/space/wlshow/scope/tool/` 在 Day 4 已经 commit，整目录 add 会让 commit 意图不清晰。
+
 ```bash
-git add src/main/java/space/wlshow/scope/session/ \
-        src/main/java/space/wlshow/scope/tool/ \
+git add src/main/java/space/wlshow/scope/session/FileSession.java \
+        src/main/java/space/wlshow/scope/tool/TodoQueryTools.java \
+        src/main/java/space/wlshow/scope/tool/TodoUpdateTools.java \
+        src/main/java/space/wlshow/scope/tool/SubmitTool.java \
+        src/main/java/space/wlshow/scope/todo/TodoItem.java \
         src/main/java/space/wlshow/scope/todo/TodoManager.java \
         src/main/java/space/wlshow/scope/agent/AgentFactory.java \
+        src/main/java/space/wlshow/scope/util/Prompts.java \
         src/main/java/space/wlshow/scope/ScopeApp.java \
         src/main/resources/prompts/analyst-multi-round.md \
         src/test/java/space/wlshow/scope/agent/Day5ScenarioTest.java \
         .gitignore
 
-git commit -m "day5: 多轮对话 + Session + CLI HITL
+git commit -m "day5: 多轮对话 + Session 持久化 + CLI HITL
 
 - InMemoryMemory 接到 buildAnalystWithTools，多轮上下文连贯
-- list_todos / update_module / update_model 三个增量工具
-- FileSession 把 TodoManager + Memory 落 data/sessions/<id>.json
+- list_todos / update_module / update_model 三个增量工具（update_* 沿用工具内 Schema 兜底）
+- TodoItem.withPayload + TodoManager.replacePayload 对称 Day 4 的 withStatus
+- FileSession 把 TodoManager 落 data/sessions/<id>.json（Memory 不持久化，由 prompt 约束 list_todos 兜底）
 - SubmitTool 用 ToolSuspendException 实现 CLI HITL，y/n 回填 ToolResult
-- 端到端剧本测试：增量追加 → y 确认 / n 拒绝
+- 端到端剧本测试骨架：增量追加 → y 确认 / n 拒绝
 - data/sessions/ 加入 .gitignore"
 ```
 
@@ -812,13 +905,24 @@ git commit -m "day5: 多轮对话 + Session + CLI HITL
 
 ---
 
-## 11. 附录 A · 为什么不直接用 AS-Java 的 `JsonSession`？
+## 11. 附录 A · 为什么不直接用 AS-Java 的 `JsonSession`、并且 Memory 不持久化？
 
 AS-Java 1.0.x 系列里 `JsonSession` 的字段命名和 `StateModule` 接口在 patch 版本之间有微调，1.0.12 与 1.1.0-RC1 又有差异。Day 5 我们走自写的 `FileSession`，原因：
 
 1. 我们只需要"加载 + 保存"两个动作，自写 30 行
 2. AS-Java 自己的 Session 把 Memory 和 StateModule 都包了，但我们的 `TodoManager` 还没实现 `StateModule`，硬接需要先适配
 3. Day 7 升级 Harness 时反正要重写一遍，没必要今天叠两层
+
+**Memory 不持久化的额外考量**：`Msg` 是含 `ContentBlock` 多态字段的密封类型（TextBlock / ToolUseBlock / ToolResultBlock / ThinkingBlock ...），用 Jackson 直接 `readList(json, Msg.class)` 在不同 AS-Java 版本会因为多态注解微调而崩。本课程的策略：
+
+- **持久化**只保留 TodoManager（纯 record + 简单 JsonNode payload，反序列化稳定）
+- **Memory 重启从空起**，靠 prompt §"第二轮起必须先调 list_todos" 让 LLM 自行重建上下文
+
+如果你确实想连 Memory 也持久化，两条路：
+- 自己写 `Msg ↔ JSON` 的转换层（按当前 AS-Java 版本的 `ContentBlock` 子类列写 switch），代码量不小
+- 把 LLM 多轮对话的 raw 文本（用户消息 + assistant 文本回复）单独存一份纯字符串，重启后用 user-msg replay 重建——但 tool_use/tool_result 信息会丢
+
+Day 7 升级到 Harness Compaction 后会有官方推荐路径，本课不强行解决。
 
 如果你想体验官方 Session，看 [../agents/06-memory-state-session.md](../agents/06-memory-state-session.md)，按 jar 里实际签名替换即可。
 
