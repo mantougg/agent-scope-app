@@ -94,5 +94,14 @@ public final class Json {
         return s;
     }
 
+    public static <T> java.util.List<T> readList(String json, Class<T> type) {
+        try {
+            return MAPPER.readValue(json,
+                    MAPPER.getTypeFactory().constructCollectionType(java.util.List.class, type));
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            throw new IllegalArgumentException("JSON 列表反序列化失败: " + e.getOriginalMessage(), e);
+        }
+    }
+
     private Json() {}
 }

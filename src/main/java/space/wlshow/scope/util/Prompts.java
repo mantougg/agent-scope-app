@@ -10,6 +10,8 @@ public final class Prompts {
 
     private static volatile String analyst;
 
+    private static volatile String analystWithTools;
+
     public static String analyst() {
         if (analyst == null) {
             synchronized (Prompts.class) {
@@ -28,6 +30,17 @@ public final class Prompts {
         } catch (IOException e) {
             throw new IllegalStateException("读取 prompt 失败: " + resource, e);
         }
+    }
+
+    public static String analystWithTools() {
+        if (analystWithTools == null) {
+            synchronized (Prompts.class) {
+                if (analystWithTools == null) {
+                    analystWithTools = read("/prompts/analyst-with-tools.md");
+                }
+            }
+        }
+        return analystWithTools;
     }
 
     private Prompts() {}

@@ -1,17 +1,18 @@
 package space.wlshow.scope.schema;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.networknt.schema.JsonSchema;
-import com.networknt.schema.JsonSchemaFactory;
-import com.networknt.schema.SpecVersion;
-import com.networknt.schema.ValidationMessage;
+import com.networknt.schema.Schema;
+import com.networknt.schema.SchemaRegistry;
+import com.networknt.schema.SpecificationVersion;
+import com.networknt.schema.Error;
+import com.networknt.schema.InputFormat;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import space.wlshow.scope.util.Json;
 
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
-import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -30,7 +31,7 @@ public final class SchemaValidator {
     public static final String ANALYSIS_RESULT = "/schemas/analysis-result.schema.json";
 
     private final String resourcePath;
-    private final JsonSchema schema;
+    private final Schema schema;
 
     public SchemaValidator(String classpathResource) {
         this.resourcePath = classpathResource;
@@ -38,14 +39,15 @@ public final class SchemaValidator {
         log.info("[Schema] 已加载: {}", classpathResource);
     }
 
-    private static JsonSchema load(String classpathResource) {
+    private static Schema load(String classpathResource) {
         try (InputStream in = SchemaValidator.class.getResourceAsStream(classpathResource)) {
             if (in == null) {
                 throw new IllegalStateException("找不到 Schema 资源: " + classpathResource);
             }
-            JsonSchemaFactory factory = JsonSchemaFactory
-                    .getInstance(SpecVersion.VersionFlag.V202012);
-            return factory.getSchema(in);
+            String schemaJson = new String(in.readAllBytes(), StandardCharsets.UTF_8);
+            SchemaRegistry registry = SchemaRegistry
+                    .withDefaultDialect(SpecificationVersion.DRAFT_2020_12);
+            return registry.getSchema(schemaJson, InputFormat.JSON);
         } catch (IllegalStateException e) {
             throw e;
         } catch (Exception e) {
@@ -55,7 +57,8 @@ public final class SchemaValidator {
     }
 
     public List<ValidationError> validate(JsonNode node) {
-        Set<ValidationMessage> raw = schema.validate(node);
+        String json = Json.write(node);
+        List<Error> raw = schema.validate(json, InputFormat.JSON);
         if (raw.isEmpty()) return List.of();
         List<ValidationError> errors = raw.stream()
                 .map(ValidationError::from)

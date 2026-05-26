@@ -1,5 +1,7 @@
 package space.wlshow.scope.agent;
 
+import io.agentscope.core.tool.Toolkit;
+import io.agentscope.core.tool.ToolkitConfig;
 import space.wlshow.scope.config.AppConfig;
 import space.wlshow.scope.hook.PromptLengthHook;
 import space.wlshow.scope.model.ModelRegistry;
@@ -8,6 +10,8 @@ import io.agentscope.core.model.Model;
 import io.agentscope.core.model.OpenAIChatModel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import space.wlshow.scope.todo.TodoManager;
+import space.wlshow.scope.tool.FrontendCreateTools;
 import space.wlshow.scope.util.Prompts;
 
 import java.util.List;
@@ -70,6 +74,27 @@ public final class AgentFactory {
                 .sysPrompt(Prompts.analyst())
                 .model(ModelRegistry.resolve(DEFAULT_MODEL_ID))
                 .maxIters(2)             // 解析任务一次性回答，不需要多步推理
+                .build();
+    }
+
+    /**
+     * 构造"工具调度版"分析 Agent，替代 Day 3 的 buildParser()。
+     * - 强制 system prompt 引导 LLM 使用 create_* 工具
+     * - parallel(true) 让多个 module/model 工具并发
+     */
+    public static ReActAgent buildAnalystWithTools(TodoManager todos) {
+        initModels();
+        Toolkit toolkit = new Toolkit(ToolkitConfig.builder()
+                .parallel(true)
+                .build());
+        toolkit.registerTool(new FrontendCreateTools(todos));
+
+        return ReActAgent.builder()
+                .name("RequirementAnalyst")
+                .sysPrompt(Prompts.analystWithTools())
+                .model(ModelRegistry.resolve(DEFAULT_MODEL_ID))
+                .toolkit(toolkit)
+                .maxIters(15)        // 一个稍大点的需求可能调 1+5+5 ≈ 11 次工具
                 .build();
     }
 

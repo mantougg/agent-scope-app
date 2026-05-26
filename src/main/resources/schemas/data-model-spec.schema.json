@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name", "type", "pinyin", "tableName", "parentId", "fields"],
+  "properties": {
+    "name":      { "type": "string", "minLength": 1 },
+    "type":      { "enum": ["TASK_MASTER_SLAVE", "TASK", "ENTITY"] },
+    "pinyin":    { "type": "string", "pattern": "^[a-z]+$" },
+    "tableName": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+    "parentId":  { "type": "string" },
+    "fields":    { "type": "array", "items": { "$ref": "#/$defs/FieldSpec" }, "minItems": 1 }
+  },
+
+  "$defs": {
+    "FieldSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "dataType"],
+      "properties": {
+        "comment":         { "type": ["string", "null"] },
+        "name":            { "type": "string", "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" },
+        "dataType":        { "enum": ["long", "int", "double", "string", "boolean", "date", "array"] },
+        "usage":           { "type": ["string", "null"] },
+        "relateModelType": { "type": ["string", "null"] },
+        "subs": {
+          "oneOf": [
+            { "type": "null" },
+            { "type": "array", "items": { "$ref": "#/$defs/FieldSpec" } }
+          ]
+        }
+      }
+    }
+  }
+}

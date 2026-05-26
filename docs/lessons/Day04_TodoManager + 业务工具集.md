@@ -212,7 +212,10 @@ class TodoItemTest {
         assertEquals(origin.type(), running.type());
         assertSame(origin.payload(), running.payload());
         assertEquals(origin.createdAt(), running.createdAt());
-        assertNotEquals(origin.updatedAt(), running.updatedAt());
+        // 不直接 assertNotEquals：Windows 上 Instant.now() 分辨率约 15ms，
+        // 两次紧贴的调用容易拿到同一时刻 → flaky。这里改成不回退断言。
+        assertTrue(running.updatedAt().compareTo(origin.updatedAt()) >= 0,
+                "updatedAt 不应回退");
     }
 
     @Test
@@ -882,9 +885,9 @@ git commit -m "day4: TodoManager + 业务工具集
 
 ### ✅ Phase 6 验收
 
-- [ ] `mvn test` 全绿
-- [ ] 3 个真实需求 `/run` 都能跑通
-- [ ] commit + 文档导航更新
+- [x] `mvn test` 全绿
+- [x] 3 个真实需求 `/run` 都能跑通
+- [x] commit + 文档导航更新
 
 ---
 
@@ -898,6 +901,7 @@ git commit -m "day4: TodoManager + 业务工具集
 | `create_model` 报 `JSON 列表反序列化失败` | LLM 把 fields 不当字符串传了。日志看 `[Tool] create_model fields=` 之前的 raw |
 | 工具并发顺序乱掉 | `parallel(true)` 的代价；如想严格顺序，先切 `parallel(false)` |
 | Schema 校验把合法 spec 也拒了 | `app-spec.schema.json` 的 `pattern` 太严；用 Day 2 的 `SchemaValidatorTest` 改造一份验证 |
+| `TodoItemTest.withStatus_keepsIdAndTypeAndPayload` 偶发失败（updatedAt 相等） | Windows 上 `Instant.now()` 分辨率约 15ms，连续两次调用可能返回同一时刻。把 `assertNotEquals` 改成 `assertTrue(running.updatedAt().compareTo(origin.updatedAt()) >= 0)`，本质要验证的是"不回退"而非"必须前进" |
 
 ---
 

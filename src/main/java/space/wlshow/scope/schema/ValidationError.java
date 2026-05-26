@@ -1,6 +1,6 @@
 package space.wlshow.scope.schema;
 
-import com.networknt.schema.ValidationMessage;
+import com.networknt.schema.Error;
 
 /**
  * 校验错误的中文友好封装。
@@ -12,17 +12,17 @@ import com.networknt.schema.ValidationMessage;
  */
 public record ValidationError(String path, String keyword, String message, String raw) {
 
-    public static ValidationError from(ValidationMessage m) {
+    public static ValidationError from(Error m) {
         String path = m.getInstanceLocation() == null
                 ? (m.getEvaluationPath() == null ? "$" : m.getEvaluationPath().toString())
                 : m.getInstanceLocation().toString();
-        String keyword = m.getType();
+        String keyword = m.getKeyword();
         String zh = translate(m);
         return new ValidationError(path, keyword, zh, m.getMessage());
     }
 
-    private static String translate(ValidationMessage m) {
-        String kw   = m.getType();
+    private static String translate(Error m) {
+        String kw   = m.getKeyword();
         String path = m.getInstanceLocation() == null
                 ? (m.getEvaluationPath() == null ? "?" : m.getEvaluationPath().toString())
                 : m.getInstanceLocation().toString();
