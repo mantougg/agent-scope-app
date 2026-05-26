@@ -172,13 +172,14 @@ mvn -U dependency:resolve
 | 路径 | 内容 |
 |------|------|
 | `docs/learning.md` | 7 天总路线图，每天的学习目标、产出、风险、AG-UI 协议契约 |
+| `docs/lessons/Day00_环境准备.md` | Day 0：JDK 17 / Maven 镜像 / Node 20 / Docker / Git Bash + jq / ARK_API_KEY 自检脚本与故障表 |
 | `docs/lessons/Day01_项目骨架 + AS-Java Hello World.md` | Day 1：6 个 Phase（含可拷贝代码 + 故障表 + 附录）|
 | `docs/lessons/Day02_数据契约 + JSON Schema 校验.md` | Day 2：POJO record + JSON Schema 2020-12 + networknt 校验器 |
 | `docs/lessons/Day03_需求解析 + Structured Output.md` | Day 3：system prompt + few-shot + `RequirementParser` 3 次自纠错 + WireMock 离线回放 |
-| `docs/lessons/Day04_TodoManager + 业务工具集.md` | Day 4：状态机 + `create_*` 工具（待落地） |
-| `docs/lessons/Day05_多轮对话 + Memory 与 Session + HITL.md` | Day 5：增量更新 + JsonSession + ToolSuspend HITL（待落地） |
-| `docs/lessons/Day06_AG-UI 协议集成（基础）.md` | Day 6：Spring Boot starter + 17 事件 + Vue3 客户端（待落地） |
-| `docs/lessons/Day07_AG-UI 协议进阶 + 收尾验收.md` | Day 7：STATE_DELTA + HITL on AG-UI + 可观测三件套（待落地） |
+| `docs/lessons/Day04_TodoManager + 业务工具集.md` | Day 4：状态机 + `create_*` 工具 |
+| `docs/lessons/Day05_多轮对话 + Memory 与 Session + HITL.md` | Day 5：增量更新 + FileSession + ToolSuspend HITL |
+| `docs/lessons/Day06_AG-UI 协议集成（基础）.md` | Day 6：Spring Boot starter + 17 事件 + Vue3 客户端 + 附录 C 版本与 API 兼容性速查 |
+| `docs/lessons/Day07_AG-UI 协议进阶 + 收尾验收.md` | Day 7：STATE_DELTA + HITL on AG-UI + HttpDispatcher 真发 HTTP + 可观测三件套 |
 | `docs/agents/` | AS-Java 框架笔记 11 篇：overview / core-concepts / react-agent / tool-system / model-providers / memory-state-session / harness / multi-agent / integration / observability-hitl / vs-python |
 
 **回答"如何用 AS-Java 做 X"类问题时，先查 `docs/agents/` 对应章节**，不要凭空回答。
@@ -191,7 +192,7 @@ mvn -U dependency:resolve
 Day[两位数序号]_[文章标题].md
 ```
 
-- `Day` 首字母大写，序号补零到两位（`Day01`、`Day02` … `Day07`）
+- `Day` 首字母大写，序号补零到两位（`Day00`、`Day01` … `Day07`）
 - 序号与标题用下划线 `_` 分隔
 - 标题保持中文 + 原始空格 / 标点（不要替换为 kebab-case），与文档第一行 `# Day N · ...` 中的标题部分一致
 
@@ -199,11 +200,12 @@ Day[两位数序号]_[文章标题].md
 
 | 课程 | 文件名 | 落地状态 |
 |------|--------|---------|
+| Day 0 | `Day00_环境准备.md` | 📘 文档 |
 | Day 1 | `Day01_项目骨架 + AS-Java Hello World.md` | ✅ 代码 + 文档 |
 | Day 2 | `Day02_数据契约 + JSON Schema 校验.md` | ✅ 代码 + 文档 |
 | Day 3 | `Day03_需求解析 + Structured Output.md` | ✅ 代码 + 文档 |
 | Day 4 | `Day04_TodoManager + 业务工具集.md` | ✅ 代码 + 文档 |
-| Day 5 | `Day05_多轮对话 + Memory 与 Session + HITL.md` | 📘 仅文档 |
+| Day 5 | `Day05_多轮对话 + Memory 与 Session + HITL.md` | ✅ 代码 + 文档 |
 | Day 6 | `Day06_AG-UI 协议集成（基础）.md` | 📘 仅文档 |
 | Day 7 | `Day07_AG-UI 协议进阶 + 收尾验收.md` | 📘 仅文档 |
 

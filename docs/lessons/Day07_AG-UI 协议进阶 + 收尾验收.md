@@ -5,6 +5,8 @@
 > 前置：[Day 6 · AG-UI 协议集成（基础）](<Day06_AG-UI 协议集成（基础）.md>) 已完成
 > 官方文档：[AG-UI State Events](https://docs.ag-ui.com/concepts/events#state-management-events) · [agentscope-examples/agui](https://github.com/agentscope-ai/agentscope-java/tree/main/agentscope-examples/agui)
 
+> 📌 **开始 Day 7 前先过一遍 Day 6 §13 附录 C "版本与 API 兼容性速查"**：starter / `@ag-ui/client` / AS-Java Hook event 的字段名 5 分钟全部锁定，本课正文不再 hedge。
+
 ## 0. 一句话目标
 
 **今天结束时**，你的项目是一个**可演示、可交付**的小型 Agent 应用：
@@ -22,8 +24,9 @@
 - ✅ 通过 `TodoChangeListener` + AG-UI event emitter 把 TodoManager 实时镜像到前端
 - ✅ 用 `STATE_SNAPSHOT`（连接时一次）+ `STATE_DELTA`（RFC 6902 JSON Patch 增量）的标准模式
 - ✅ HITL 完全走 AG-UI：`TOOL_CALL_*` 事件 → 前端弹窗 → `messages: [..., {role:"tool", toolCallId, content}]` 回填
+- ✅ **Dispatcher 升级**：从 `DryRunDispatcher` no-op 升级到三档实现（DryRun / Http / WireMock 后端），让需求 #4 真发 HTTP
 - ✅ Logback JSON + MDC `traceId` 通过 Reactor `contextWrite` 透传
-- ✅ 跑通 8 个异常剧本回归
+- ✅ 跑通 8 个异常剧本回归（E4 失败剧本通过 WireMock 后端的 504 stub 触发，比 Mockito 接口 mock 真实得多）
 - ✅ 完成需求逐项打勾、架构图、演示视频
 
 ## 2. 时间盒（建议 9 学时，分上午 3.5h + 下午 5.5h）
@@ -1231,18 +1234,222 @@ scope_tool_latency_seconds_sum{toolName="create_app",status="success",} 0.045
 
 ### 9.2 实现兜底
 
-#### E4：模拟 dispatch 失败
+#### Dispatcher 三档实现（先把 dry-run 升级成真发 HTTP）
 
-把 SubmitTool 改成可注入 `Dispatcher` 接口：
+需求 #4 "前端下发" 在 Day 4-6 一直是 `DryRunDispatcher` no-op，**名不副实**。Day 7 把它正经做出来——但不要求接真业务后端，**用 WireMock 在 9082 端口拉一个 mock 后端足够**，让 dispatcher 真的发 HTTP，让 E4 失败剧本真的能触发 5xx。
 
 ```java
+package space.wlshow.scope.dispatch;
+
 public interface Dispatcher {
+    /** 抛异常表示下发失败，外层会 markFailed。 */
     void dispatch(TodoItem item) throws Exception;
 }
+```
+
+**三档实现**：
+
+**① `DryRunDispatcher`（默认 profile，最快）**
+
+```java
+package space.wlshow.scope.dispatch;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.stereotype.Component;
 
 @Component
+@ConditionalOnProperty(name = "scope.dispatcher.mode", havingValue = "dry-run", matchIfMissing = true)
 public class DryRunDispatcher implements Dispatcher {
-    @Override public void dispatch(TodoItem item) { /* no-op */ }
+    private static final Logger log = LoggerFactory.getLogger(DryRunDispatcher.class);
+    @Override
+    public void dispatch(TodoItem item) {
+        log.info("[Dispatch] DRY-RUN id={} type={} target={}",
+                item.id(), item.type(), item.targetName());
+    }
+}
+```
+
+**② `HttpDispatcher`（profile=http，真发 HTTP）**
+
+```java
+package space.wlshow.scope.dispatch;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import io.netty.channel.ChannelOption;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.stereotype.Component;
+import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
+import reactor.netty.http.client.HttpClient;
+import space.wlshow.scope.observability.Stage;
+import space.wlshow.scope.todo.TodoItem;
+
+import java.time.Duration;
+
+@Component
+@ConditionalOnProperty(name = "scope.dispatcher.mode", havingValue = "http")
+public class HttpDispatcher implements Dispatcher {
+
+    private static final Logger log = LoggerFactory.getLogger(HttpDispatcher.class);
+    private final WebClient client;
+
+    public HttpDispatcher(@Value("${scope.dispatcher.baseUrl:http://localhost:9082}") String baseUrl) {
+        // 关键：connect/response 各 3 秒超时——E4 测 timeout 时不要等 30s
+        HttpClient netty = HttpClient.create()
+                .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 3000)
+                .responseTimeout(Duration.ofSeconds(3));
+        this.client = WebClient.builder()
+                .baseUrl(baseUrl)
+                .clientConnector(new org.springframework.http.client.reactive.ReactorClientHttpConnector(netty))
+                .build();
+        log.info("[Dispatch] HTTP mode, baseUrl={}", baseUrl);
+    }
+
+    @Override
+    public void dispatch(TodoItem item) throws Exception {
+        String endpoint = endpointOf(item.type());     // /api/create_app / create_module / create_model
+        JsonNode payload = item.payload();
+        Stage.run(Stage.FRONTEND_DISPATCH, () ->
+                log.info("[Dispatch] POST {} id={} size={}",
+                        endpoint, item.id(), payload.toString().length()));
+        try {
+            String resp = client.post()
+                    .uri(endpoint)
+                    .bodyValue(payload)
+                    .retrieve()
+                    .bodyToMono(String.class)
+                    .block(Duration.ofSeconds(5));
+            log.info("[Dispatch] OK id={} resp.len={}", item.id(),
+                    resp == null ? 0 : resp.length());
+        } catch (WebClientResponseException e) {
+            // 4xx / 5xx：保留 status + body，给 SubmitTool 拼 PARTIAL_FAILURE 时用上
+            throw new DispatchException(e.getStatusCode().value(),
+                    e.getResponseBodyAsString(), e);
+        }
+    }
+
+    private static String endpointOf(TodoType t) {
+        return switch (t) {
+            case CREATE_APP    -> "/api/create_app";
+            case CREATE_MODULE -> "/api/create_module";
+            case CREATE_MODEL  -> "/api/create_model";
+        };
+    }
+}
+
+/** 携带 HTTP 状态码的下发异常——LLM 拿到 PARTIAL_FAILURE 时按状态码决定重试策略。 */
+public class DispatchException extends Exception {
+    public final int statusCode;
+    public final String responseBody;
+    public DispatchException(int status, String body, Throwable cause) {
+        super("HTTP " + status + ": " + (body == null ? "" : body.substring(0, Math.min(200, body.length()))), cause);
+        this.statusCode = status;
+        this.responseBody = body;
+    }
+}
+```
+
+**③ `WireMockBackend`（测试时启动 mock 后端，让 HttpDispatcher 有的可打）**
+
+```java
+package space.wlshow.scope.dispatch;
+
+import com.github.tomakehurst.wiremock.WireMockServer;
+import com.github.tomakehurst.wiremock.client.WireMock;
+import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.stereotype.Component;
+
+import static com.github.tomakehurst.wiremock.client.WireMock.*;
+import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.options;
+
+/** Day 7 demo 用的 mock 业务后端，9082 端口接 3 个 create 接口。 */
+@Component
+@ConditionalOnProperty(name = "scope.dispatcher.mockBackend", havingValue = "true")
+public class WireMockBackend {
+
+    private static final Logger log = LoggerFactory.getLogger(WireMockBackend.class);
+    private WireMockServer server;
+
+    @PostConstruct
+    public void start() {
+        server = new WireMockServer(options().port(9082));
+        server.start();
+        // 3 个接口全部 200 + 回 {"id":"<生成的>","status":"created"}
+        for (String path : new String[]{"/api/create_app", "/api/create_module", "/api/create_model"}) {
+            server.stubFor(post(urlEqualTo(path))
+                    .willReturn(aResponse()
+                            .withStatus(200)
+                            .withHeader("Content-Type", "application/json")
+                            .withBody("{\"id\":\"be-${random}\",\"status\":\"created\"}")));
+        }
+        log.info("[MockBackend] started on port 9082, 3 endpoints stubbed");
+    }
+
+    @PreDestroy
+    public void stop() {
+        if (server != null) server.stop();
+    }
+
+    /** 测试里临时改变 stub 行为：让某个 endpoint 失败一次。 */
+    public void simulateFailure(String endpoint, int status, String body) {
+        server.stubFor(post(urlEqualTo(endpoint))
+                .willReturn(aResponse().withStatus(status).withBody(body))
+                .atPriority(1));  // 高优先级覆盖默认 200
+    }
+
+    public void reset() {
+        server.resetAll();
+        start();   // 重新装默认 200 stub
+    }
+}
+```
+
+**`application.yml` 配置切档**：
+
+```yaml
+scope:
+  dispatcher:
+    mode: dry-run            # dry-run（默认 no-op）/ http（真发 9082）
+    baseUrl: http://localhost:9082
+    mockBackend: false       # 设 true 启动内嵌 WireMock 后端
+```
+
+**启动剧本**：
+
+```bash
+# A. 学员第一次跑（什么都不配）→ DryRunDispatcher，最快
+mvn spring-boot:run
+
+# B. 想看真 HTTP 走通 → http + 内嵌 mock 后端
+mvn spring-boot:run \
+    -Dspring-boot.run.arguments="--scope.dispatcher.mode=http --scope.dispatcher.mockBackend=true"
+
+# C. 对接真业务后端 → http + 指定外部 baseUrl
+mvn spring-boot:run \
+    -Dspring-boot.run.arguments="--scope.dispatcher.mode=http --scope.dispatcher.baseUrl=http://your-backend:8090"
+```
+
+跑 B 之后浏览器输入"做一个员工档案管理" + 确认下发，**WireMock 后端日志会真打到 9082**，DevTools / 日志能看到 3 次 `POST /api/create_*`。这就是需求 #4 名副其实的状态。
+
+> 📌 **为什么内嵌 mock 而不是另开 docker**：学员第一次跑就要弄 docker 心智负担太重；用 WireMock 内嵌 9082，**跟 Spring Boot 同一进程同一终端**，启停跟主进程一起走，不会出现"主进程跑起来了但忘了启 mock 后端" 的尴尬。
+
+#### E4：模拟 dispatch 失败
+
+把 SubmitTool 改成可注入 `Dispatcher` 接口（上面已经做了；这里是 SubmitTool 内部用法）：
+
+```java
+@Component
+public class DryRunDispatcherLegacy implements Dispatcher {
+    @Override public void dispatch(TodoItem item) { /* no-op，已被上面三档实现取代，留个引用方便理解原始形态 */ }
 }
 
 // SubmitTool
@@ -1334,31 +1541,52 @@ public String retryFailed(@ToolParam(name = "ids",
 
 #### E4 集成测试断言（含闭环验证）
 
+测试启动时**同时**用 `http + mockBackend=true` profile，让 HttpDispatcher 真打到内嵌 WireMock，然后用 `WireMockBackend.simulateFailure` 让第一次 POST 返回 504：
+
 ```java
-@Test
-void e4_dispatchFailure_agentRetriesViaToolCall() throws Exception {
-    // 安排 dispatcher 第一次失败，第二次成功
-    // 注意：dispatch 返回 void，Mockito 必须走 doThrow().doNothing() 链式，不能用 when().thenReturn(null)
-    doThrow(new RuntimeException("timeout"))
-            .doNothing()
-            .when(dispatcher).dispatch(any());
-    // 录制 LLM mock：收到 PARTIAL_FAILURE 后调 retry_failed(ids=[...])
-    wireMockLlmResponseRetry();
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
+                properties = {
+                    "scope.dispatcher.mode=http",
+                    "scope.dispatcher.mockBackend=true",
+                    "scope.dispatcher.baseUrl=http://localhost:9082"
+                })
+class E4DispatchFailureTest {
 
-    var events = collectEvents("做一个员工档案管理\n然后提交");
+    @Autowired WireMockBackend mockBackend;
+    @LocalServerPort int port;
 
-    // 关键断言
-    // 1. 至少一个 TOOL_CALL_RESULT 内容含 "PARTIAL_FAILURE"
-    assertTrue(events.stream().anyMatch(e ->
-            e.type().equals("TOOL_CALL_RESULT") && e.content().contains("PARTIAL_FAILURE")));
-    // 2. LLM 收到失败后又调了 retry_failed 工具
-    assertTrue(events.stream().anyMatch(e ->
-            e.type().equals("TOOL_CALL_START") && "retry_failed".equals(e.toolName())));
-    // 3. 最终所有 todo 是 SUCCESS（含重试出来的新 id）
-    assertTrue(todoManager.snapshot().stream()
-            .anyMatch(it -> it.status() == TodoStatus.SUCCESS));
+    @Test
+    void dispatchFailure_agentRetriesViaToolCall() throws Exception {
+        // 安排第一次 /api/create_app 504 → HttpDispatcher 抛 DispatchException(504, "...")
+        mockBackend.simulateFailure("/api/create_app", 504,
+                "{\"error\":\"upstream timeout\"}");
+
+        // 录制 LLM mock：收到 PARTIAL_FAILURE 后调 retry_failed(ids=[...])
+        wireMockLlmResponseRetry();
+
+        // 跑剧本（用 WebClient 调 /agui/run 收事件）
+        var events = collectEvents("做一个员工档案管理\n然后提交");
+
+        // 关键断言
+        // 1. 至少一个 TOOL_CALL_RESULT 内容含 "PARTIAL_FAILURE" + "HTTP 504"
+        assertTrue(events.stream().anyMatch(e ->
+                e.type().equals("TOOL_CALL_RESULT")
+                && e.content().contains("PARTIAL_FAILURE")
+                && e.content().contains("504")));
+        // 2. LLM 收到失败后又调了 retry_failed 工具
+        assertTrue(events.stream().anyMatch(e ->
+                e.type().equals("TOOL_CALL_START") && "retry_failed".equals(e.toolName())));
+        // 3. WireMock 后端被打了 ≥4 次：3 次首发 + 1 次重试（首发的 create_app 504，重试时 stub 已 reset 回 200）
+        mockBackend.reset();
+        assertTrue(mockBackend.getRequestCount() >= 4);
+        // 4. 最终所有 todo（含重试出来的新 id）都是 SUCCESS
+        assertTrue(todoManager.snapshot().stream()
+                .anyMatch(it -> it.status() == TodoStatus.SUCCESS));
+    }
 }
 ```
+
+> 📌 这个测试**比原来的 Mockito 写法可靠**：原来 mock 的是 Java 接口，跑不出"真 HTTP 调用、网络层超时、JSON 序列化失败"这些**只有真打才暴露**的问题。改成 WireMock 后端后，HttpDispatcher 的 Netty 超时、序列化、状态码解析都顺带验了。
 
 #### E5：Memory 截断
 
@@ -1472,7 +1700,7 @@ mvn -q test -Dgroups=integration
 | 1 | 用户输入需求 | Vue3 `<textarea>` → `/agui/run` | 浏览器输入 "做一个员工档案管理" |
 | 2 | 解析为 App/Module/Model | FrontendCreateTools + AgentFactory | 看右侧看板出现 1 APP + N Module + N Model |
 | 3 | 列出待办列表 | TodoManager + STATE_SNAPSHOT | 右侧看板 |
-| 4 | 前端下发 | SubmitTool + Dispatcher | 弹窗确认后看板状态切到 SUCCESS |
+| 4 | 前端下发 | SubmitTool + HttpDispatcher → 业务后端（dev 用内嵌 WireMock 9082）| 弹窗确认后看板状态切到 SUCCESS；WireMock 后端日志看到 POST /api/create_* |
 | 5 | 状态管理 | TodoStatus 状态机 + STATE_DELTA | 看板颜色实时变 |
 | 6 | 异常 warnings/questions | analyst-multi-round prompt + warning 字段 | 输入"做个系统"看 LLM 反问 |
 | 7 | JSON Schema 校验 | SchemaValidator 在 tool 入参兜底 | E3 测试 |
@@ -1888,9 +2116,9 @@ ls data/workspaces/$(ls data/workspaces | head -1)/
 下一步你可以做的事（不在本课范围内）：
 
 - **Workflow 改造**：用 `Pipeline` / `Workflow` 把"解析→评审→落地"拆成多个 Agent（[../agents/08-multi-agent.md](../agents/08-multi-agent.md)）
-- **真实前端集成**：把 `DryRunDispatcher` 换成真的 HTTP 客户端，对接业务前端的 `create_app / create_module` 接口
-- **可观测性**：接 OpenTelemetry，traceId 串到 Jaeger / SkyWalking
+- **Memory 持久化**：本课为简化主路径选择"只持久化 TodoManager"，要让重启后 LLM 也记得对话原文，参考 [Day 5 §14 附录 D · Memory 持久化扩展](<Day05_多轮对话 + Memory 与 Session + HITL.md>)（三档方案：纯文本快照 / ContentBlock 多态序列化 / Harness 内置 Session）
 - **认证授权**：starter `/agui/run` 加 Spring Security 鉴权
 - **生产化**：Harness 接入、Compaction 调优、模型多 provider 故障转移
+- **真业务后端对接**：把 Day 7 §9.2 的 `WireMockBackend` 替换成对接公司真实业务前端的 `create_app / create_module` 接口，`HttpDispatcher` 的 baseUrl 指过去即可
 
 恭喜你完成 7 天学习。把 PR 链接发给我，我们一起 review 演示视频。

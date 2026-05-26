@@ -28,13 +28,14 @@
 
 | Day | 主题 | 关键交付 | 对应需求 |
 |-----|------|---------|----------|
+| **0** | **环境准备**（推荐 1-2h 前置） | JDK 17 / Maven 镜像 / Node 20 / Docker / Git Bash + jq / ARK_API_KEY | 前置 |
 | 1 | 项目骨架 + AS-Java Hello World | 跑通最小 ReActAgent，工程结构定型 | 基础 |
 | 2 | 数据契约 + JSON Schema 校验 | App/Module/Model POJO + Schema 校验器 | #7、#11、#12、#13 |
 | 3 | 需求解析 + Structured Output | 能从中文需求生成结构化草稿（CLI） | #1、#2、#6 |
 | 4 | TodoManager + 业务工具集 | 待办状态机 + create_* 工具 | #3、#5 |
 | 5 | 多轮对话 + Memory/Session + HITL (CLI) | 增量更新 + JsonSession + ToolSuspend 确认 | #8、#9 |
 | 6 | AG-UI 协议集成（基础） | Spring Boot starter 接入 + 17 事件 + Vue3 客户端 demo | #4、#14 |
-| 7 | AG-UI 协议进阶 + 收尾验收 | STATE_DELTA 同步 TodoManager + HITL on AG-UI + 可观测三件套（日志/Jaeger/Micrometer）+ 验收 | #4、#9、#10、#14、收口 |
+| 7 | AG-UI 协议进阶 + 收尾验收 | STATE_DELTA 同步 TodoManager + HITL on AG-UI + 可观测三件套（日志/Jaeger/Micrometer）+ HttpDispatcher 真发 HTTP + 验收 | #4、#9、#10、#14、收口 |
 
 > 📌 **关于需求 #14**：AG-UI（[官方文档](https://java.agentscope.io/zh/task/agui.html)）是本路线图新加入的一条对外契约：所有 Agent ↔ 前端交互必须走 AG-UI 标准事件流（17 种 EventType），不再自定义 SSE payload。Day 6 起 Spring Boot 入口、Day 7 起 TodoManager 状态同步全部对齐这一规范。
 
@@ -69,6 +70,23 @@
 - ✅ `logs/` 下能查到完整一次会话的输入/中间结果/输出（**7 个 stage 一个不少**：INPUT/LLM_CALL/TOOL_CALL/SCHEMA_VALIDATE/TODO_UPDATE/FRONTEND_DISPATCH/FRONTEND_CALLBACK）
 - ✅ Jaeger UI 至少 1 条完整 trace（含 `agent.call` + `tool.*` + `frontend_dispatch.*` 子 Span），traceId 跟 jq 日志、curl 响应头**三处对得上**
 - ✅ `/actuator/metrics` 列出 ≥ 5 个 `scope.*` 指标（LLM 延迟、工具调用计数 + 延迟、Prompt 字符直方图等）
+
+---
+
+## Day 0 · 环境准备（推荐 1-2 小时前置）
+
+> 📘 **详细课程**：[lessons/Day00_环境准备.md](<./lessons/Day00_环境准备.md>) — JDK / Maven / Node / Docker / Git Bash / jq / API Key 全套自检脚本与故障表
+
+7 天课程的地基。**别**直接跳进 Day 1——多数学员卡在第一天的真正原因是环境，不是 Agent。一次性把：
+
+- JDK 17 + JAVA_HOME 置顶
+- Maven 3.9 + 阿里云镜像
+- Node 20 (走 nvm)
+- Docker Desktop（Day 7 才用，但提前装好不耽误事）
+- Git Bash + jq（Windows 学员重点：Day 6 起所有 shell 命令都假定 Git Bash）
+- 火山方舟 `ARK_API_KEY` 环境变量
+
+跑通后再开 Day 1。
 
 ---
 

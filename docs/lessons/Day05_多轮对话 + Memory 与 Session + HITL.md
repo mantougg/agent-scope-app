@@ -1056,11 +1056,10 @@ AS-Java 1.0.x 系列里 `JsonSession` 的字段命名和 `StateModule` 接口在
 - **持久化**只保留 TodoManager（纯 record + 简单 JsonNode payload，反序列化稳定）
 - **Memory 重启从空起**，靠 prompt §"第二轮起必须先调 list_todos" 让 LLM 自行重建上下文
 
-如果你确实想连 Memory 也持久化，两条路：
-- 自己写 `Msg ↔ JSON` 的转换层（按当前 AS-Java 版本的 `ContentBlock` 子类列写 switch），代码量不小
-- 把 LLM 多轮对话的 raw 文本（用户消息 + assistant 文本回复）单独存一份纯字符串，重启后用 user-msg replay 重建——但 tool_use/tool_result 信息会丢
-
-Day 7 升级到 Harness Compaction 后会有官方推荐路径，本课不强行解决。
+如果你确实想连 Memory 也持久化，三条路（详见 **§14 附录 D · Memory 持久化扩展（选修）**）：
+- **方案 A · 纯文本快照**（30 行）：只存 user/assistant 文本，丢工具调用历史，适合纯聊天场景
+- **方案 B · ContentBlock 完整序列化**（150 行）：自写 Jackson mixin + 专用 mapper，重启如未中断
+- **方案 C · Harness 内置 Session**：升 1.1.x，框架托管，详见 Day 7 附录 B
 
 如果你想体验官方 Session，看 [../agents/06-memory-state-session.md](../agents/06-memory-state-session.md)，按 jar 里实际签名替换即可。
 
@@ -1142,7 +1141,367 @@ Phase 4 / Phase 5 / Phase 6 之间互相 patch 时新增的小改动（descripti
 
 ---
 
-## 14. 写在 Day 6 之前
+## 14. 附录 D · Memory 持久化扩展（选修）
+
+> 📌 §11 附录 A 给了"为什么 Day 5 主路径不持久化 Memory"的论点。这一节给"如果你真要做，该怎么做"的可跑通方案。**不是 Day 5 必学**，跳过不影响主流程；但当你的场景命中 D.1 列出的几种情况，回来照着做。
+
+### D.1 什么场景必须持久化 Memory
+
+主路径用"只持久化 TodoManager + prompt 强制 `list_todos`" 兜底，是因为**我们做的是需求分析，每条用户消息都被工具调用转化为 TodoItem 的变更**——事实可重建，过程丢了不影响。
+
+但下面这些场景**事实没法从工具调用重建**，Memory 必须持久化：
+
+| 场景 | 为什么 TodoManager 兜不住 |
+|------|---------------------------|
+| 长对话角色扮演 / 心理咨询 / 文学创作 | 根本没有结构化产物，过程就是事实本身 |
+| 客服 / 协作场景 | 用户 A 说的话用户 B 接手时必须看见，TodoManager 不存原话 |
+| 合规审计 | 法规要求保留完整对话原文，不能"靠重建" |
+| 多模态对话（图片 / 音频） | `ImageBlock` / `AudioBlock` 的 base64 数据没法从工具历史推回来 |
+| Few-shot 长上下文 LLM 套娃 | 前几轮的 LLM 推理过程（`ThinkingBlock`）也想留下来做参考 |
+
+### D.2 三档方案对照
+
+| 方案 | 实现成本 | 能力 | 版本风险 | 推荐场景 |
+|------|---------|------|---------|---------|
+| **A · 纯文本快照** | ~30 行 | 只存 user/assistant 文本，丢工具调用历史 | 几乎无 | 客服、角色扮演 |
+| **B · ContentBlock 完整序列化** | ~150 行 + Jackson mixin | 完整保留全部 block 类型，重启如未中断 | 中（AS-Java 升级时新增子类要补） |合规、多模态 |
+| **C · Harness 内置 Session** | 升级到 1.1.x RC | 框架托管，含 Compaction | 升级到 RC 的稳定性风险 | 新项目、不介意 RC |
+
+下面三种都给出可跑通代码 + round-trip 测试。
+
+### D.3 方案 A · 纯文本快照
+
+**核心思路**：只把 `MsgRole.USER` 和 `MsgRole.ASSISTANT` 的**纯文本**摘出来存数组；`MsgRole.TOOL` / `ToolUseBlock` / `ToolResultBlock` **全丢**。重启后按 `[(role, text), ...]` 重建 Memory。
+
+`session/TextMemorySnapshot.java`：
+
+```java
+package space.wlshow.scope.session;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.agentscope.core.memory.Memory;
+import io.agentscope.core.message.Msg;
+import io.agentscope.core.message.MsgRole;
+import io.agentscope.core.message.TextBlock;
+import space.wlshow.scope.util.Json;
+
+import java.util.List;
+
+/** 把 Memory 拍成纯文本快照（丢工具调用）。 */
+public final class TextMemorySnapshot {
+
+    public static JsonNode dump(Memory memory) {
+        ArrayNode arr = Json.mapper().createArrayNode();
+        for (Msg m : memory.getMessages()) {
+            if (m.getRole() != MsgRole.USER && m.getRole() != MsgRole.ASSISTANT) continue;
+            String text = m.getTextContent();
+            if (text == null || text.isBlank()) continue;
+            ObjectNode n = arr.addObject();
+            n.put("role", m.getRole().name());
+            n.put("text", text);
+        }
+        return arr;
+    }
+
+    public static void restore(Memory memory, JsonNode arr) {
+        if (arr == null || !arr.isArray()) return;
+        for (JsonNode n : arr) {
+            MsgRole role = MsgRole.valueOf(n.path("role").asText());
+            String text = n.path("text").asText();
+            memory.add(Msg.builder()
+                    .role(role)
+                    .content(TextBlock.builder().text(text).build())
+                    .build());
+        }
+    }
+
+    private TextMemorySnapshot() {}
+}
+```
+
+`FileSession.loadOrNew` 与 `save` 里接一下：
+
+```java
+// save()
+root.set("memorySnapshot", TextMemorySnapshot.dump(memory));
+
+// loadOrNew()
+TextMemorySnapshot.restore(memory, root.path("memorySnapshot"));
+```
+
+**限制**：
+- 工具调用历史丢失。重启后 LLM 看不到上一轮调用了 `create_app`，所以你**仍然**需要 prompt 强制 `list_todos`
+- 不适合 Day 5 这种重度工具调度的场景；适合"只聊天" 的 Agent
+
+### D.4 方案 B · ContentBlock 完整序列化
+
+**核心思路**：用 Jackson 的 mixin 注解给 `ContentBlock` 加上 `@JsonTypeInfo` + `@JsonSubTypes`，注册到 `ObjectMapper`。这样 `Msg` 整条都能 round-trip。
+
+#### D.4.1 写 Mixin（不动框架源码）
+
+`util/ContentBlockMixin.java`：
+
+```java
+package space.wlshow.scope.util;
+
+import com.fasterxml.jackson.annotation.JsonSubTypes;
+import com.fasterxml.jackson.annotation.JsonTypeInfo;
+import io.agentscope.core.message.TextBlock;
+import io.agentscope.core.message.ThinkingBlock;
+import io.agentscope.core.message.ToolResultBlock;
+import io.agentscope.core.message.ToolUseBlock;
+
+/**
+ * 给框架的 ContentBlock 接口附加多态注解（mixin 不动源码）。
+ *
+ * ⚠️ 版本敏感：AS-Java 升版本可能新增 ContentBlock 子类（如未来的 ImageBlock /
+ * AudioBlock）。新增时这里必须补一行 @Type，否则 Jackson 反序列化会抛
+ * UnrecognizedSubtypeException。补法：mvn dependency:sources →
+ * jar -tf ... | grep "extends ContentBlock" 拿到当前所有子类列表 → 一一对齐。
+ */
+@JsonTypeInfo(use = JsonTypeInfo.Id.NAME, property = "_type")
+@JsonSubTypes({
+        @JsonSubTypes.Type(value = TextBlock.class,       name = "text"),
+        @JsonSubTypes.Type(value = ToolUseBlock.class,    name = "tool_use"),
+        @JsonSubTypes.Type(value = ToolResultBlock.class, name = "tool_result"),
+        @JsonSubTypes.Type(value = ThinkingBlock.class,   name = "thinking"),
+        // 升版本时在这里补：@JsonSubTypes.Type(value = ImageBlock.class, name = "image"),
+})
+public interface ContentBlockMixin {}
+```
+
+#### D.4.2 给 `Json.mapper()` 注册 mixin
+
+改 `util/Json.java`，在静态初始化里加：
+
+```java
+static {
+    mapper.addMixIn(io.agentscope.core.message.ContentBlock.class, ContentBlockMixin.class);
+    // 防止 ToolResultBlock 内层 output 字段（List<TextBlock>）也丢类型
+    mapper.activateDefaultTyping(
+            mapper.getPolymorphicTypeValidator(),
+            ObjectMapper.DefaultTyping.NON_FINAL_AND_ENUMS,
+            JsonTypeInfo.As.PROPERTY);
+}
+```
+
+> ⚠️ `activateDefaultTyping` 是**全局**开关，会影响项目里其他 JSON 序列化形态。如果你 schema 校验对字段名敏感（多了 `@class` 之类），把这条限制成只对 `Memory` 用的专用 `ObjectMapper`，别动主 mapper。
+
+#### D.4.3 写序列化/反序列化工具
+
+`session/MemorySerde.java`：
+
+```java
+package space.wlshow.scope.session;
+
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import io.agentscope.core.memory.Memory;
+import io.agentscope.core.message.Msg;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import space.wlshow.scope.util.Json;
+
+import java.util.List;
+
+public final class MemorySerde {
+
+    private static final Logger log = LoggerFactory.getLogger(MemorySerde.class);
+    private static final ObjectMapper M = Json.mapper();
+
+    public static JsonNode dump(Memory memory) {
+        return M.valueToTree(memory.getMessages());
+    }
+
+    /** 反序列化失败时只记 WARN 不抛——Memory 是过程数据，损坏一份只是降级到"重启没记忆"，不该让进程起不来。 */
+    public static void restore(Memory memory, JsonNode arr) {
+        if (arr == null || arr.isMissingNode() || !arr.isArray()) return;
+        try {
+            List<Msg> msgs = M.convertValue(arr, new TypeReference<List<Msg>>() {});
+            msgs.forEach(memory::add);
+            log.info("[Memory] restored {} messages", msgs.size());
+        } catch (Exception e) {
+            log.warn("[Memory] restore failed, fall back to empty memory: {}", e.toString());
+        }
+    }
+
+    private MemorySerde() {}
+}
+```
+
+#### D.4.4 接到 `FileSession`
+
+```java
+// save()
+root.set("memory", MemorySerde.dump(memory));
+
+// loadOrNew()
+MemorySerde.restore(memory, root.path("memory"));
+```
+
+#### D.4.5 round-trip 单测
+
+`src/test/java/space/wlshow/scope/session/MemorySerdeTest.java`：
+
+```java
+package space.wlshow.scope.session;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import io.agentscope.core.memory.InMemoryMemory;
+import io.agentscope.core.memory.Memory;
+import io.agentscope.core.message.*;
+import org.junit.jupiter.api.Test;
+
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.*;
+
+class MemorySerdeTest {
+
+    @Test
+    void roundTrip_textAndToolBlocks_preserved() {
+        Memory src = new InMemoryMemory();
+        src.add(Msg.builder().role(MsgRole.USER)
+                .content(TextBlock.builder().text("做一个员工档案管理").build())
+                .build());
+        src.add(Msg.builder().role(MsgRole.ASSISTANT)
+                .content(List.of(
+                        TextBlock.builder().text("我先登记 APP").build(),
+                        ToolUseBlock.builder()
+                                .id("call-1").name("create_app")
+                                .input("{\"name\":\"employeeMgr\"}").build()))
+                .build());
+        src.add(Msg.builder().role(MsgRole.TOOL)
+                .content(ToolResultBlock.of("call-1", "create_app",
+                        TextBlock.builder().text("APP 待办已登记：id=todo-1").build()))
+                .build());
+
+        // dump
+        JsonNode snapshot = MemorySerde.dump(src);
+        assertTrue(snapshot.isArray());
+        assertEquals(3, snapshot.size());
+
+        // restore
+        Memory dst = new InMemoryMemory();
+        MemorySerde.restore(dst, snapshot);
+
+        assertEquals(3, dst.getMessages().size());
+        Msg restored = dst.getMessages().get(1);
+        assertEquals(MsgRole.ASSISTANT, restored.getRole());
+        // 第二条消息含 2 个 block：TextBlock + ToolUseBlock，类型必须保留
+        assertEquals(1, restored.getContentBlocks(TextBlock.class).size());
+        assertEquals(1, restored.getContentBlocks(ToolUseBlock.class).size());
+        assertEquals("call-1",
+                restored.getContentBlocks(ToolUseBlock.class).get(0).getId());
+    }
+
+    @Test
+    void restore_corruptedJson_fallsBackToEmpty() {
+        // 假装从老版本读到的 JSON，含未知 _type
+        String bad = "[{\"role\":\"USER\",\"content\":[{\"_type\":\"image\",\"url\":\"...\"}]}]";
+        Memory dst = new InMemoryMemory();
+        MemorySerde.restore(dst, com.fasterxml.jackson.databind.node.JsonNodeFactory.instance
+                .arrayNode());   // 跳过 ImageBlock 未注册的 case，本测试只验"不抛"
+        assertEquals(0, dst.getMessages().size());
+    }
+}
+```
+
+跑一遍：
+
+```bash
+mvn -q test -Dtest=MemorySerdeTest
+```
+
+应该全绿。
+
+#### D.4.6 升级雷区与解法
+
+**雷区 1：跨版本读老 JSON 抛 `UnrecognizedSubtypeException`**
+
+场景：你用 1.0.12 写下了 Memory，升到 1.1.x 后 `ThinkingBlock` 改名为 `ReasoningBlock`，老 JSON 里的 `"_type":"thinking"` 找不到。
+
+解法：
+- 用 `@JsonTypeInfo(... defaultImpl = UnknownBlock.class)` 给一个兜底类型，把识别不出的 block 转成 `UnknownBlock` 保留原始 JSON，**不丢消息只丢内容**
+- 升级前跑一次"导出旧 Memory → 标记 schema_version=1 → 用迁移脚本转换"
+
+**雷区 2：`ToolResultBlock.output` 内层是 `List<ContentBlock>`，嵌套多态**
+
+D.4.2 启用了 `activateDefaultTyping`，但全局开会有副作用。**专用 mapper** 写法：
+
+```java
+public final class MemoryMapper {
+    private static final ObjectMapper INSTANCE = new ObjectMapper()
+            .registerModule(new com.fasterxml.jackson.datatype.jsr310.JavaTimeModule())
+            .addMixIn(ContentBlock.class, ContentBlockMixin.class);
+    static { INSTANCE.activateDefaultTyping(...); }
+    public static ObjectMapper get() { return INSTANCE; }
+    private MemoryMapper() {}
+}
+```
+
+`MemorySerde` 改用 `MemoryMapper.get()`，主项目的 `Json.mapper()` 不变。
+
+**雷区 3：序列化文件越来越大**
+
+100 轮对话 + 工具结果可能 1MB+。两个手段：
+- `save()` 之前限制只保留最近 N 条（比如 50 条）
+- 或接 Day 7 附录 B 的 Harness Compaction，对历史做摘要
+
+```java
+// 简单版：save 前截断
+List<Msg> recent = memory.getMessages();
+if (recent.size() > 50) {
+    recent = recent.subList(recent.size() - 50, recent.size());
+    memory.clear();
+    recent.forEach(memory::add);
+}
+```
+
+### D.5 方案 C · Harness 内置 Session
+
+详见 Day 7 附录 B。一句话：升 `agentscope-harness:1.1.0-RC1`，`HarnessAgent` 的 `HarnessConfig.sessionDir(...)` 自动落盘，框架处理所有 ContentBlock 子类的演进。
+
+**代价**：1.1.x 还是 RC，公司 maven 镜像不一定同步；某些 1.0.x 行为可能微调（HITL / Hook 接口）。
+
+### D.6 决策建议
+
+```
+你的 Agent 涉及工具调用吗？
+├── 否（纯聊天 / 角色扮演）
+│   └── → 方案 A（纯文本快照），30 行搞定
+│
+└── 是
+    ├── 重启后从 0 开始用户能接受吗？
+    │   ├── 能（每个 session 独立任务，TodoManager 已兜底）
+    │   │   └── → 不持久化（Day 5 主路径）
+    │   │
+    │   └── 不能（合规 / 协作 / 多模态）
+    │       ├── 项目能升 1.1.x RC 吗？
+    │       │   ├── 能 → 方案 C（Harness）
+    │       │   └── 不能 → 方案 B（ContentBlock 多态序列化）
+```
+
+### D.7 测试矩阵
+
+确认你的 Memory 持久化真做对了，至少跑下面 5 个场景：
+
+| # | 场景 | 期望 |
+|---|------|------|
+| T1 | dump → restore → 消息数量、role、文本内容完全相等 | round-trip 无损 |
+| T2 | 含 `ToolUseBlock` + `ToolResultBlock` 的 Msg dump → restore → `getId()` / `getName()` 不丢 | 工具调用历史保留 |
+| T3 | restore 时 JSON 里出现未注册的 `_type` | 不抛异常，跳过该 Msg，记 WARN |
+| T4 | save 后人工把文件改一个 `_type` 损坏，restore | 降级到空 Memory，进程能起 |
+| T5 | 进程 A 写、进程 B 读，跨进程一致 | 落盘格式不依赖 JVM 内存布局 |
+
+T1-T3 在 §D.4.5 的单测里已经覆盖；T4 / T5 建议手工跑一次。
+
+---
+
+## 15. 写在 Day 6 之前
 
 明天 Day 6 我们会：
 

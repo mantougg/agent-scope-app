@@ -230,14 +230,15 @@ agent {
 
 | 文档 | 用途 |
 |------|------|
-| [docs/learning.md](docs/learning.md) | 7 天完整学习路线（Day 1 ~ Day 7） |
+| [docs/learning.md](docs/learning.md) | 7 天完整学习路线（Day 0 环境准备 + Day 1 ~ Day 7） |
+| [Day00 课程文档](<docs/lessons/Day00_环境准备.md>) | JDK / Maven 镜像 / Node / Docker / Git Bash + jq / API Key 自检脚本（开课前 1-2h 必跑） |
 | [Day01 课程文档](<docs/lessons/Day01_项目骨架 + AS-Java Hello World.md>) | 环境、Maven、日志、配置、REPL、流式 |
 | [Day02 课程文档](<docs/lessons/Day02_数据契约 + JSON Schema 校验.md>) | POJO record、JSON Schema 2020-12、networknt 校验器 |
 | [Day03 课程文档](<docs/lessons/Day03_需求解析 + Structured Output.md>) | system prompt + few-shot、`RequirementParser` 3 次自纠错、WireMock 离线回放 |
 | [Day04 课程文档](<docs/lessons/Day04_TodoManager + 业务工具集.md>) | TodoManager 状态机 + `create_*` 工具集 + 工具内 Schema 兜底（✅ 已落地） |
-| [Day05 课程文档](<docs/lessons/Day05_多轮对话 + Memory 与 Session + HITL.md>) | 增量更新 + JsonSession + ToolSuspend HITL（待落地） |
-| [Day06 课程文档](<docs/lessons/Day06_AG-UI 协议集成（基础）.md>) | Spring Boot starter + 17 个 AG-UI 事件 + Vue3 客户端（待落地） |
-| [Day07 课程文档](<docs/lessons/Day07_AG-UI 协议进阶 + 收尾验收.md>) | STATE_DELTA + HITL on AG-UI + OTel/Jaeger/Micrometer（待落地） |
+| [Day05 课程文档](<docs/lessons/Day05_多轮对话 + Memory 与 Session + HITL.md>) | 增量更新 + FileSession + ToolSuspend HITL（✅ 已落地） |
+| [Day06 课程文档](<docs/lessons/Day06_AG-UI 协议集成（基础）.md>) | Spring Boot starter + 17 个 AG-UI 事件 + Vue3 客户端 + 附录 C 版本兼容性速查（待落地） |
+| [Day07 课程文档](<docs/lessons/Day07_AG-UI 协议进阶 + 收尾验收.md>) | STATE_DELTA + HITL on AG-UI + HttpDispatcher（WireMock mock 后端）+ OTel/Jaeger/Micrometer（待落地） |
 | [docs/agents/](docs/agents/) | AS-Java 框架笔记 11 篇：Agent / Memory / Tool / Model / Harness 等 |
 | [CLAUDE.md](CLAUDE.md) | Claude Code 在本仓库内的工程约定 |
 | [AGENTS.md](AGENTS.md) | 通用 AI Agent 工程指引（Codex / Cursor 等） |
