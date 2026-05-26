@@ -1,0 +1,18 @@
+server:
+  port: 8080
+
+# AG-UI starter 配置（key 来自 io.agentscope.spring.boot.agui.common.AguiProperties，
+# 前缀 agentscope.agui，对应字段：pathPrefix / defaultAgentId / serverSideMemory ...）
+agentscope:
+  agui:
+    path-prefix: /agui          # 暴露根：POST /agui/run
+    default-agent-id: analyst   # 客户端不传 agentId 时使用
+    # 开启 server-side memory：DefaultAgentResolver 会走 ThreadSessionManager 分支，
+    # 我们覆盖的子类 Bean 在那里按 threadId 加载 FileSession。关掉就回退到"每请求一新 Agent"
+    # 且 registry 必须有 analyst 才能工作。
+    server-side-memory: true
+
+logging:
+  level:
+    space.wlshow.scope: DEBUG
+    io.agentscope: INFO

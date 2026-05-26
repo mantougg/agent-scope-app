@@ -23,6 +23,22 @@
 
     <dependencyManagement>
         <dependencies>
+            <!--
+              统一 Jackson 三件套（core / databind / annotations）到 2.17.0。
+              Spring Boot 3.2.5 BOM 锁定的是 2.15.4；如果只在下面 dependencies 里把
+              databind 升到 2.17.0，core/annotations 仍然停留在 2.15.4，运行时会撞
+              NoSuchMethodError: BufferRecycler.releaseToPool() —— 那个方法是
+              jackson-core 2.16+ 才加的。
+              Maven BOM 是"先声明者胜"，所以 jackson-bom 必须放在
+              spring-boot-dependencies 之前。
+            -->
+            <dependency>
+                <groupId>com.fasterxml.jackson</groupId>
+                <artifactId>jackson-bom</artifactId>
+                <version>2.17.0</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
             <dependency>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-dependencies</artifactId>
@@ -83,16 +99,14 @@
             <scope>test</scope>
         </dependency>
 
-        <!-- Jackson：JSON ↔ POJO -->
+        <!-- Jackson：JSON ↔ POJO（版本由上方 jackson-bom 统一管控） -->
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
-            <version>2.17.0</version>
         </dependency>
         <dependency>
             <groupId>com.fasterxml.jackson.datatype</groupId>
             <artifactId>jackson-datatype-jsr310</artifactId>
-            <version>2.17.0</version>
         </dependency>
 
         <!-- JSON Schema 2020-12 校验（版本跟随 AgentScope 传递依赖） -->
@@ -104,6 +118,12 @@
     </dependencies>
 
     <build>
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+                <filtering>true</filtering>
+            </resource>
+        </resources>
         <plugins>
             <plugin>
                 <groupId>org.springframework.boot</groupId>
