@@ -4,13 +4,13 @@
 
 ## 1. 项目一句话定位
 
-基于 **AgentScope-Java 1.0.12** 的需求分析智能体学习项目。当前处于 **Day 4 已落地** 状态（详见 [docs/learning.md](docs/learning.md)）：骨架 + REPL + JSON Schema 数据契约 + `RequirementParser`（3 次自纠错）+ WireMock 离线回放 + `TodoManager` 状态机 + `FrontendCreateTools` 工具集（含工具内 Schema 兜底）+ `/run` 工具调度命令都已就位。Day 5 ~ Day 7 课程文档已写完，代码尚未落地。
+基于 **AgentScope-Java 1.0.12** 的需求分析智能体学习项目。当前处于 **Day 6 已落地** 状态（详见 [docs/learning.md](docs/learning.md)）：Day 1-5 全部就位 + Day 6 把对外入口从 CLI 切到 **Spring Boot WebFlux**（`ScopeApp` 成为 `@SpringBootApplication`，Day 5 的 CLI REPL 保留在 `ScopeReplApp` 备份入口）+ `agentscope-agui-spring-boot-starter` 暴露 `POST /agui/run` SSE + `AguiAgentConfig` 通过覆盖 `ThreadSessionManager` 子类按 threadId 复用 `FileSession` + `CorsWebFilter` 放开 5173 跨域 + `frontend/` Vite + Vue3 + `@ag-ui/client` 打字机渲染。Day 7 课程文档已写完，代码尚未落地。
 
 **不要**在没有用户明确要求时把项目"补全"到 Day 7 的形态——每一天的代码都对应当天的学习目标，提前堆砌会破坏教学节奏。具体表现为：
 
-- 不要在 Day 4 代码里提前接 Memory / Session（那是 Day 5）
-- 不要在仓库里提前出现 Spring Boot / WebFlux / `@ag-ui/client`（那是 Day 6/7）
-- 不要在 Day 4 阶段引入 OpenTelemetry / Micrometer（那是 Day 7）
+- 不要在 Day 6 代码里提前接 `AguiStateBridge` / `STATE_DELTA` / AG-UI HITL（那是 Day 7）
+- 不要提前引入 OpenTelemetry / Micrometer / Jaeger（那是 Day 7）
+- Day 6 阶段 `SubmitTool` 的 `ToolSuspendException` 在 AG-UI 通道下**没有**前端回填路径，是 Day 7 §5 才补完的——目前调它会让一次 run 看起来"卡住没反应"，这是预期内
 
 ## 2. 技术栈与版本
 
@@ -23,11 +23,14 @@
 | 日志 | logback-classic 1.5.6 + SLF4J，输出到 `logs/scope.log`（已 gitignored） |
 | 配置 | Typesafe Config 1.4.3（HOCON 格式） |
 | 模型 | 默认走火山引擎方舟（OpenAI 兼容协议），通过 `OpenAIChatModel` + `baseUrl` 接入；默认模型 `doubao-1-5-pro-32k-250115` |
-| JSON | Jackson 2.17.0（databind + jsr310） |
+| JSON | Jackson 2.17.0（databind + jsr310）— **`<dependencyManagement>` 里 `jackson-bom` 必须排在 `spring-boot-dependencies` 之前**，否则会被 BOM 拉回 2.15.4 触发 `NoSuchMethodError: BufferRecycler.releaseToPool()` |
 | Schema 校验 | networknt json-schema-validator 2.0.0（Draft 2020-12） |
 | 测试 | JUnit Jupiter 5.10.2 + WireMock 3.5.4（离线 mock LLM） |
+| Web 容器（Day 6+） | Spring Boot 3.2.5 + `spring-boot-starter-webflux`（Netty，**不要**同时加 `spring-boot-starter-web`） |
+| AG-UI 协议（Day 6+） | `agentscope-agui-spring-boot-starter:1.0.12`（与主包同版本） |
+| 前端（Day 6+） | `frontend/` 独立 npm 工程：Vite + Vue3 + `@ag-ui/client` |
 
-> Day 5 起会加 `JsonSession` 与 Memory、Day 6 加 `spring-boot-starter-webflux` 和 `agentscope-agui-spring-boot-starter`、Day 7 加 OpenTelemetry + Micrometer。**当前 Day 4 阶段不应在 pom 出现以上任一个**。
+> Day 7 起会加 OpenTelemetry + Micrometer + Jaeger（docker）+ HttpDispatcher。**当前 Day 6 阶段不应在 pom 出现以上任一个**。
 
 ## 3. 常用命令
 
@@ -35,11 +38,17 @@
 # 编译
 mvn -q compile
 
-# 跑 REPL（默认入口 ScopeApp）
-mvn -q compile exec:java
+# 起 Spring Boot 主入口（Day 6 起的默认路径）：暴露 POST http://localhost:8080/agui/run
+mvn -q spring-boot:run
 
-# 跑别的 main（占位类示例）
-mvn -q compile exec:java -Dexec.mainClass=space.wlshow.scope.ConfigCheck
+# 临时回到 Day 5 的 CLI REPL（不启 8080 端口）
+mvn -q compile exec:java -Dexec.mainClass=space.wlshow.scope.ScopeReplApp
+
+# 起前端 Vue3 dev server（另一终端，Vite 默认 5173）
+cd frontend && npm install && npm run dev
+
+# Day 6 §6.3：用 curl + jq 直接打 SSE 流，肉眼数事件类型
+./scripts/agui-tail.sh http://localhost:8080/agui/run "$(cat fixtures/demo-input.json)"
 
 # 跑离线测试（默认排除 @Tag("live")，无需真实 API Key）
 mvn test
@@ -120,6 +129,35 @@ mvn -U dependency:resolve
 | `resources/schemas/module-spec.schema.json` | ModuleSpec schema，工具内 `MODULE_VAL` 加载 |
 | `resources/schemas/data-model-spec.schema.json` | DataModelSpec schema（含递归 FieldSpec `$defs`），工具内 `MODEL_VAL` 加载 |
 
+### Day 5（多轮对话 + Memory/Session + HITL）
+
+| 类 | 职责 |
+|---|---|
+| `session.FileSession` | 单文件会话：只持久化 `TodoManager`，Memory 每次进程启动从空开始；`loadOrNew(id)` 静态加载 / `save()` 落 `data/sessions/<id>.json` |
+| `tool.TodoQueryTools` | `@Tool list_todos`：列出当前所有 todo 供 LLM 自查 |
+| `tool.TodoUpdateTools` | `@Tool update_app / update_module / update_model`：让 LLM 增量改已存在的 todo（替代清空重建） |
+| `tool.SubmitTool` | `@Tool submit_to_frontend(confirmed)`：confirmed=false 抛 `ToolSuspendException` 触发 HITL；CLI 走 `ScopeReplApp.handleSuspend()` 回填，**Day 6 AG-UI 通道暂无回填路径，Day 7 §5 补完** |
+| `ScopeReplApp` | Day 5 落地的 CLI REPL（`/parse` `/run` `/submit` `/todos` 四个子命令 + ToolSuspend 回填）；Day 6 切 Spring Boot 后**保留为备份入口**，用 `-Dexec.mainClass=space.wlshow.scope.ScopeReplApp` 触发 |
+
+### Day 6（AG-UI 协议集成 - 基础）
+
+| 类 / 资源 | 职责 |
+|---|---|
+| `ScopeApp` | 改造成 `@SpringBootApplication` 引导类，`mvn spring-boot:run` 起 Netty WebFlux 暴露 `POST /agui/run` |
+| `config.AguiAgentConfig` | 覆盖 starter 自动配置的 `ThreadSessionManager` Bean（`@ConditionalOnMissingBean`）：子类 `getOrCreateAgent` 把默认 `Supplier<Agent>` 换成闭包 threadId 的 Supplier，按 threadId 从 `FileSession.loadOrNew(threadId)` 复用待办/记忆；`@PostConstruct` 跑一次 `AgentFactory.initModels()` 避免 `[primary] 被覆盖` 刷屏；`@PreDestroy` 把 `activeSessions` 全量落盘；同文件还有 `CorsWebFilter` 显式列 GET/POST/OPTIONS 放开 5173 |
+| `resources/application.yml` | Spring Boot + starter 配置：`agentscope.agui.path-prefix=/agui` / `default-agent-id=analyst` / `server-side-memory=true`（必须开，否则 `DefaultAgentResolver` 不走 sessionManager 分支） |
+| `pom.xml` | 加 `spring-boot-starter-webflux` + `agentscope-agui-spring-boot-starter:${agentscope.version}` + `spring-boot-maven-plugin`；`jackson-bom 2.17.0` import **必须前置**于 `spring-boot-dependencies` |
+| `frontend/` | 独立 npm 工程：Vite + Vue3 + `@ag-ui/client`；`src/App.vue` 用 `HttpAgent.subscribe({ onTextMessageStartEvent / onTextMessageContentEvent / onTextMessageEndEvent / onToolCallStartEvent / onToolCallEndEvent / onRunFinishedEvent / onRunErrorEvent })` 渲染打字机回复 |
+| `scripts/agui-tail.sh` | curl + jq 把 SSE 帧按 `type \t (delta\|toolCallName\|...)` 打成一行一个事件，肉眼数 17 类型齐不齐 |
+| `fixtures/demo-input.json` | 最小 `RunAgentInput` 样例，供 `scripts/agui-tail.sh` 与 `curl` 直接喂入 |
+| `docs/screenshots/` | 截图 / GIF 录屏目录（Day 6 起），含 `day6-curl-trace.png` / `day6-end-to-end.gif`（学员录） |
+
+> ⚠️ Day 6 与文档的偏离点（实现是对的，文档之后会同步）：
+> - **不是** `AguiAgentRegistryCustomizer` —— starter 1.0.12 的 `registerFactory(String, Supplier<Agent>)` 无参 Supplier 拿不到 threadId，所以走"覆盖 ThreadSessionManager 子类"路线
+> - **不是** `agentscope.agui.base-path / default-agent` —— `AguiProperties` 实际字段是 `pathPrefix / defaultAgentId`
+> - **不是** `FileSession.loadOrNew` 内置缓存 —— 实际是 `AguiAgentConfig.activeSessions` `ConcurrentHashMap` 外部兜底
+> - 前端 `@ag-ui/client` 当前版本回调入参形态是 `({event}) => event.xxx`，工具名字段是 `event.toolCallName`（不是 `toolName`）
+
 ## 6. 测试约定
 
 ### 当前测试套件（10 个测试类，离线共 36 个测试）
@@ -154,16 +192,18 @@ mvn -U dependency:resolve
 - 用户输入用 `[USER]` 前缀，模型回复用 `[BOT]` / `[BOT-STREAM]`，钩子日志用 `[Hook]` 前缀
 - Day 3 新增日志前缀：`[Parse]`（attempt / promptHead / raw/stripped chars / schema errors）、`[Schema]`（加载 / 校验失败明细）
 - Day 4 新增日志前缀：`[Tool]`（每个 `create_*` 工具调用与 schema 拒收）、`[Todo]`（CREATE / 状态迁移 / CLEAR / LOADED）
+- Day 5 新增日志前缀：`[Session]`（NEW / LOAD / SAVED）、`[Submit]`（suspend / dispatched）
+- Day 6 新增日志前缀：`[AguiConfig]`（models initialized / build agent for thread=...）
 
 ## 8. 写代码的几条硬规矩
 
 1. **包名一致**：所有新文件放在 `space.wlshow.scope.*` 下，子包按职责分：
-   - 当前已有：`agent/` `config/` `hook/` `model/` `schema/` `spec/` `todo/` `tool/` `util/`
-   - 后续将加：`frontend/`（Day 6 AG-UI bridge）
+   - 当前已有：`agent/` `config/` `hook/` `model/` `schema/` `session/` `spec/` `todo/` `tool/` `util/`
+   - 后续将加：`agui/`（Day 7 `AguiStateBridge` + AG-UI HITL 桥）、`dispatch/`（Day 7 `HttpDispatcher`）
    - **不要**把 POJO 放进 `model/` ——`model/` 当前承担"AS-Java Model 注册表"职责；POJO 一律在 `spec/`
 2. **不要往源码里塞 API Key 或个人模型 ID**——这些写进 `application-local.conf`
 3. **不要把临时实验类提交进 master**（比如 Day 1 课程里那个验证用的 `ConfigCheck`，验完就删）
-4. **遵循当前 Day 的范围**：Day 4 不引 Memory / Session / Spring；Day 5 才加 Memory，Day 6 才加 Spring Boot，Day 7 才加 OpenTelemetry
+4. **遵循当前 Day 的范围**：Day 6 不接 `AguiStateBridge` / `STATE_DELTA` / AG-UI HITL 回填 / OTel/Micrometer——这些全部是 Day 7 的活儿
 5. 中文注释 OK，本仓库面向中文学习者；类与方法 Javadoc 用中文也可
 6. **Schema 校验先行**：所有 LLM 输出落到 `AnalysisResult` / `AppSpec` / `ModuleSpec` / `DataModelSpec` 前必须过 `SchemaValidator`；不要在 Java 侧用正则修 LLM 输出，让 LLM 自己改（`RequirementParser` 走"回灌错误"重试，`FrontendCreateTools` 走"返回 ERROR 字符串"让 LLM 重调工具）
 
@@ -206,7 +246,7 @@ Day[两位数序号]_[文章标题].md
 | Day 3 | `Day03_需求解析 + Structured Output.md` | ✅ 代码 + 文档 |
 | Day 4 | `Day04_TodoManager + 业务工具集.md` | ✅ 代码 + 文档 |
 | Day 5 | `Day05_多轮对话 + Memory 与 Session + HITL.md` | ✅ 代码 + 文档 |
-| Day 6 | `Day06_AG-UI 协议集成（基础）.md` | 📘 仅文档 |
+| Day 6 | `Day06_AG-UI 协议集成（基础）.md` | ✅ 代码 + 文档 |
 | Day 7 | `Day07_AG-UI 协议进阶 + 收尾验收.md` | 📘 仅文档 |
 
 新建课程文档时同步在 `docs/learning.md` 路线图、`README.md` 文档导航、本文件第 9 节表格里加引用。Markdown 链接因含空格，建议用 `[文本](<带空格的路径.md>)` 角括号形式或将空格转义为 `%20`。
@@ -249,6 +289,12 @@ claude mcp add agentscope-docs -- uvx --from mcpdoc mcpdoc \
 | `[Tool] create_app rejected: ...` 但 LLM 后续不重试 | LLM 解读 ERROR 字符串失败；调高 `maxIters` 或人肉看 `logs/scope.log` 里上下文 |
 | `IllegalStateException: 终态不可迁移` | LLM 重复调 mark 类工具（Day 5/6 才会出现）；Day 4 内只应 add，不应 mark |
 | `TodoItemTest.withStatus_keepsIdAndTypeAndPayload` 偶发失败 | Windows `Instant.now()` 分辨率约 15ms；断言已改成 `compareTo >= 0` 不回退，命中老版本断言时按 [Day04 课程附录](<docs/lessons/Day04_TodoManager + 业务工具集.md>) 替换 |
+| `NoSuchMethodError: BufferRecycler.releaseToPool()` | `jackson-bom 2.17.0` 没在 `<dependencyManagement>` 里前置于 `spring-boot-dependencies`，被 Boot BOM 拉回 2.15.4；按 `pom.xml` 第 35-48 行顺序排（Maven BOM "先声明者胜"） |
+| 浏览器 5173 调 `/agui/run` CORS 报错 | `AguiAgentConfig.corsWebFilter()` 没被扫到，或 `application.yml` 里又写了一份 `agentscope.agui.cors.*` 让响应头出现两份 `Access-Control-Allow-Origin`；二选一 |
+| 起得来但 `/agui/run` 一直 404 | `application.yml` 漏了 `agentscope.agui.path-prefix=/agui` 或写成 `base-path`；正确 key 是 `pathPrefix`（参看 `AguiProperties`） |
+| Day 6 起浏览器对话后 `data/sessions/` 空 | `AguiAgentConfig.@PreDestroy saveAllOnShutdown` 仅在优雅关停时触发，Ctrl+C / 异常退出可能跑不到；现象正常，Day 7 接 `AguiStateBridge` 时顺手把 `session.save()` 挂到 listener 上即时落盘 |
+| 浏览器发送后一直转圈、后端日志停在 `[Submit] suspend` | LLM 触发了 `submit_to_frontend(confirmed=false)` → `ToolSuspendException`，Day 6 AG-UI 通道**没有**前端回填路径；Day 7 §5 才补完。临时绕开：在 `AgentFactory.buildAnalystWithTools` 里**先摘掉** `toolkit.registerTool(new SubmitTool(todos))` |
+| 浏览器 Agent 回复一整段砸下来不流式 | 模型 `stream` 没开；检查 `application.conf` / `ModelRegistry` 里 `OpenAIChatModel.builder().stream(true)`；火山方舟必须开 stream 才推 tool_call 增量 |
 
 ## 11. Git 提交风格
 

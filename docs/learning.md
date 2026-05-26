@@ -26,16 +26,16 @@
 
 ### 0.2 一周路线图
 
-| Day | 主题 | 关键交付 | 对应需求 |
-|-----|------|---------|----------|
-| **0** | **环境准备**（推荐 1-2h 前置） | JDK 17 / Maven 镜像 / Node 20 / Docker / Git Bash + jq / ARK_API_KEY | 前置 |
-| 1 | 项目骨架 + AS-Java Hello World | 跑通最小 ReActAgent，工程结构定型 | 基础 |
-| 2 | 数据契约 + JSON Schema 校验 | App/Module/Model POJO + Schema 校验器 | #7、#11、#12、#13 |
-| 3 | 需求解析 + Structured Output | 能从中文需求生成结构化草稿（CLI） | #1、#2、#6 |
-| 4 | TodoManager + 业务工具集 | 待办状态机 + create_* 工具 | #3、#5 |
-| 5 | 多轮对话 + Memory/Session + HITL (CLI) | 增量更新 + JsonSession + ToolSuspend 确认 | #8、#9 |
-| 6 | AG-UI 协议集成（基础） | Spring Boot starter 接入 + 17 事件 + Vue3 客户端 demo | #4、#14 |
-| 7 | AG-UI 协议进阶 + 收尾验收 | STATE_DELTA 同步 TodoManager + HITL on AG-UI + 可观测三件套（日志/Jaeger/Micrometer）+ HttpDispatcher 真发 HTTP + 验收 | #4、#9、#10、#14、收口 |
+| Day | 主题 | 关键交付 | 对应需求 | 代码落地 |
+|-----|------|---------|----------|---------|
+| **0** | **环境准备**（推荐 1-2h 前置） | JDK 17 / Maven 镜像 / Node 20 / Docker / Git Bash + jq / ARK_API_KEY | 前置 | 📘 文档 |
+| 1 | 项目骨架 + AS-Java Hello World | 跑通最小 ReActAgent，工程结构定型 | 基础 | ✅ |
+| 2 | 数据契约 + JSON Schema 校验 | App/Module/Model POJO + Schema 校验器 | #7、#11、#12、#13 | ✅ |
+| 3 | 需求解析 + Structured Output | 能从中文需求生成结构化草稿（CLI） | #1、#2、#6 | ✅ |
+| 4 | TodoManager + 业务工具集 | 待办状态机 + create_* 工具 | #3、#5 | ✅ |
+| 5 | 多轮对话 + Memory/Session + HITL (CLI) | 增量更新 + JsonSession + ToolSuspend 确认 | #8、#9 | ✅ |
+| 6 | AG-UI 协议集成（基础） | Spring Boot starter 接入 + 17 事件 + Vue3 客户端 demo | #4、#14 | ✅ |
+| 7 | AG-UI 协议进阶 + 收尾验收 | STATE_DELTA 同步 TodoManager + HITL on AG-UI + 可观测三件套（日志/Jaeger/Micrometer）+ HttpDispatcher 真发 HTTP + 验收 | #4、#9、#10、#14、收口 | 📘 仅文档 |
 
 > 📌 **关于需求 #14**：AG-UI（[官方文档](https://java.agentscope.io/zh/task/agui.html)）是本路线图新加入的一条对外契约：所有 Agent ↔ 前端交互必须走 AG-UI 标准事件流（17 种 EventType），不再自定义 SSE payload。Day 6 起 Spring Boot 入口、Day 7 起 TodoManager 状态同步全部对齐这一规范。
 
@@ -754,6 +754,17 @@ if (out.getGenerateReason() == GenerateReason.TOOL_SUSPENDED) {
 ## Day 6 · AG-UI 协议集成（基础）
 
 > 📘 **详细课程**：[lessons/Day06_AG-UI 协议集成（基础）.md](<./lessons/Day06_AG-UI 协议集成（基础）.md>) — 6 个 Phase 时间盒 + Spring Boot starter + 17 事件 + Vue3 + @ag-ui/client 客户端 demo
+>
+> ✅ **代码落地状态**：本仓库已落地。落地实现与课程文档存在以下偏离（实现为准，课程文档稍后同步）：
+> - **不是** `AguiAgentRegistryCustomizer` —— starter 1.0.12 的 `registerFactory(String, Supplier<Agent>)` 是无参 Supplier 拿不到 threadId。实际走 `config.AguiAgentConfig` 覆盖 `ThreadSessionManager` Bean（`@ConditionalOnMissingBean`），子类的 `getOrCreateAgent` 把默认 Supplier 换成闭包 threadId 的 Supplier。前提是 `application.yml` 开 `agentscope.agui.server-side-memory=true`
+> - **不是** `agentscope.agui.base-path / default-agent` —— `AguiProperties` 实际字段是 `pathPrefix / defaultAgentId`
+> - `FileSession.loadOrNew` **不**内置缓存，`AguiAgentConfig.activeSessions` `ConcurrentHashMap` 在外部兜底；`@PreDestroy` 时统一 `save()`
+> - 前端 `@ag-ui/client` 当前版本回调入参形态是 `({event}) => event.xxx`，工具名字段是 `event.toolCallName`（不是 `toolName`）
+> - `pom.xml` `<dependencyManagement>` 里 `jackson-bom 2.17.0` **必须前置**于 `spring-boot-dependencies`，否则被 Boot BOM 拉回 2.15.4 触发 `NoSuchMethodError: BufferRecycler.releaseToPool()`
+>
+> ⚠️ **已知坑（留到 Day 7 修）**：
+> - Day 5 的 `SubmitTool`（`ToolSuspendException` HITL）在 AG-UI 通道下没有前端回填路径，触发后一次 run 看起来"卡死"。Day 7 §5 接 AG-UI HITL 后修复。临时绕开：从 `AgentFactory.buildAnalystWithTools` 摘掉 `toolkit.registerTool(new SubmitTool(todos))`
+> - 持久化只靠 `@PreDestroy` 全量落盘，Ctrl+C / 异常退出可能漏；Day 7 接 `AguiStateBridge` 时顺手把 `session.save()` 挂到 `TodoChangeListener` 上即时落盘
 
 ### 学习目标
 

@@ -3,7 +3,7 @@
 > 基于 **AgentScope-Java** + **火山引擎方舟（Volcengine Ark）** 的需求分析智能体学习项目。
 > 7 天内从零搭建一个能把中文需求拆解为「应用 / 模块 / 数据模型」的 ReAct Agent。
 
-当前进度：**Day 4 已落地**（需求解析 + Structured Output：JSON Schema 校验 + 3 次自纠错 + WireMock 离线回放；**Day 4**：`TodoManager` 状态机 + `FrontendCreateTools` 三个 `@Tool` + 工具内 Schema 兜底 + `/run` 工具调度命令）。Day 5 ~ Day 7 课程文档已就位，代码待落地。详见 [docs/learning.md](docs/learning.md) 的路线图。
+当前进度：**Day 6 已落地**（Day 4 工具调度 + Day 5 多轮对话/`FileSession`/HITL + Day 6 **Spring Boot WebFlux 入口** + `agentscope-agui-spring-boot-starter` + Vue3/`@ag-ui/client` 前端 + `CorsWebFilter`；Day 5 的 CLI REPL 保留为 `ScopeReplApp` 备份入口）。Day 7 课程文档已写完，代码待落地。详见 [docs/learning.md](docs/learning.md) 的路线图。
 
 ---
 
@@ -31,10 +31,39 @@ export ARK_API_KEY=apikey-xxxxxxxx
 
 > 设完后**新开一个终端**才能让 JVM 读到该变量。
 
-### 1.3 启动 REPL
+### 1.3 启动（Day 6 起：Spring Boot + Vue3）
+
+Day 6 把对外入口从 CLI 切到 **Spring Boot WebFlux**，前端走 **Vue3 + `@ag-ui/client`**，两端通过 **AG-UI 协议**（SSE 事件流）通信。
 
 ```bash
-mvn -q compile exec:java
+# 后端：起 Spring Boot，暴露 POST http://localhost:8080/agui/run（SSE）
+mvn -q spring-boot:run
+
+# 前端（另开一个终端）
+cd frontend
+npm install        # 首次
+npm run dev        # Vite 默认 5173
+# 浏览器开 http://localhost:5173，输入"做一个员工档案管理"看流式打字机回复
+```
+
+不开浏览器、直接用 `curl` 验证 SSE 事件流（Windows 用 Git Bash + jq）：
+
+```bash
+# 把 17 类事件按 type 打成一行一个，肉眼数 Lifecycle / TextMessage / ToolCall 是否齐
+./scripts/agui-tail.sh http://localhost:8080/agui/run "$(cat fixtures/demo-input.json)"
+```
+
+> ⚠️ Day 6 只接通"Agent ↔ 前端"聊天通道，**右侧 Todo 看板状态同步**与 **HITL 确认**留到 Day 7。
+> 当前 `submit_to_frontend` 工具（Day 5 的 ToolSuspend HITL）在 AG-UI 通道下没有确认回填路径，
+> Day 7 §5 才补完整流程。
+
+### 1.4 CLI REPL 备份（Day 1-5 调试用）
+
+Day 5 的 CLI REPL（`/parse` `/run` `/submit` `/todos` 四个子命令）整体保留在 `ScopeReplApp`，
+不启 8080 端口，方便回退调试：
+
+```bash
+mvn -q compile exec:java -Dexec.mainClass=space.wlshow.scope.ScopeReplApp
 ```
 
 进入交互界面后：
@@ -80,7 +109,7 @@ bye.
 
 日志会同时写到 `logs/scope.log`。
 
-### 1.4 跑测试（无需真实 API Key）
+### 1.5 跑测试（无需真实 API Key）
 
 ```bash
 # 离线测试套件（CI 默认）
@@ -124,22 +153,36 @@ agent-scope-app/
 ├── docs/
 │   ├── learning.md                          ← 7 天学习路线图
 │   ├── lessons/                             ← Day01 ~ Day07 详细课程
-│   └── agents/                              ← AS-Java 笔记（11 篇）
+│   ├── agents/                              ← AS-Java 笔记（11 篇）
+│   └── screenshots/                         ← Day 6+ 截图/GIF 录屏
+├── frontend/                                ← Day 6：Vite + Vue3 + @ag-ui/client
+│   ├── package.json
+│   ├── vite.config.ts
+│   └── src/App.vue                          ← HttpAgent.subscribe(...) 打字机渲染
+├── scripts/
+│   └── agui-tail.sh                         ← Day 6：curl + jq 把 SSE 帧按 type 一行一行打
+├── fixtures/
+│   └── demo-input.json                      ← Day 6：最小 RunAgentInput 样例
+├── data/sessions/                           ← Day 5+：FileSession 落盘目录（gitignored）
 ├── logs/                                    ← 运行后自动生成
 └── src/
     ├── main/
     │   ├── java/space/wlshow/scope/
-    │   │   ├── ScopeApp.java                ← 入口（REPL，含 /parse /run 命令）
+    │   │   ├── ScopeApp.java                ← Day 6：Spring Boot 主类
+    │   │   ├── ScopeReplApp.java            ← Day 5 CLI REPL 备份（/parse /run /submit /todos）
     │   │   ├── agent/
     │   │   │   ├── AgentFactory.java        ← buildAnalyst() + buildParser() + buildAnalystWithTools()
     │   │   │   ├── RequirementParser.java   ← Day 3：3 次自纠错
     │   │   │   └── ParseException.java      ← 携带 lastErrors
-    │   │   ├── config/AppConfig.java        ← Typesafe Config 包装
+    │   │   ├── config/
+    │   │   │   ├── AppConfig.java           ← Typesafe Config 包装
+    │   │   │   └── AguiAgentConfig.java     ← Day 6：ThreadSessionManager 子类覆盖 + CorsWebFilter
     │   │   ├── hook/PromptLengthHook.java   ← Day 1：Prompt 长度监控钩子
     │   │   ├── model/ModelRegistry.java     ← Day 1：模型注册表
     │   │   ├── schema/
     │   │   │   ├── SchemaValidator.java     ← Day 2：JSON Schema 2020-12 校验
     │   │   │   └── ValidationError.java     ← 错误对象（path/keyword/message）
+    │   │   ├── session/FileSession.java     ← Day 5：TodoManager 文件持久化
     │   │   ├── spec/                        ← Day 2：5 个 record POJO
     │   │   │   ├── AnalysisResult.java
     │   │   │   ├── AppSpec.java
@@ -152,14 +195,18 @@ agent-scope-app/
     │   │   │   ├── TodoItem.java            ← 不可变 record，withStatus 衍生
     │   │   │   ├── TodoChangeListener.java  ← 监听器接口（Day 7 STATE_DELTA 用）
     │   │   │   └── TodoManager.java         ← 5 条非法迁移防御 + getState/loadState
-    │   │   ├── tool/                        ← Day 4：业务工具集
-    │   │   │   └── FrontendCreateTools.java ← @Tool create_app/module/model + 工具内 Schema 兜底
+    │   │   ├── tool/                        ← Day 4/5：业务工具集
+    │   │   │   ├── FrontendCreateTools.java ← Day 4：@Tool create_app/module/model + 工具内 Schema 兜底
+    │   │   │   ├── TodoQueryTools.java      ← Day 5：list_todos
+    │   │   │   ├── TodoUpdateTools.java     ← Day 5：update_app/module/model
+    │   │   │   └── SubmitTool.java          ← Day 5：submit_to_frontend + ToolSuspend HITL（Day 6 AG-UI 通道未接，Day 7 §5 续完）
     │   │   └── util/
     │   │       ├── Json.java                ← ObjectMapper 门面 + stripFence + readList
     │   │       └── Prompts.java             ← classpath prompt 加载（双检锁缓存）
     │   └── resources/
     │       ├── application.conf             ← 主配置（进 git）
     │       ├── application-local.conf       ← 本地覆盖（gitignored）
+    │       ├── application.yml              ← Day 6：Spring Boot + agentscope.agui.* 配置
     │       ├── logback.xml
     │       ├── prompts/
     │       │   ├── analyst.md               ← Day 3：need-analyst system prompt
@@ -237,7 +284,7 @@ agent {
 | [Day03 课程文档](<docs/lessons/Day03_需求解析 + Structured Output.md>) | system prompt + few-shot、`RequirementParser` 3 次自纠错、WireMock 离线回放 |
 | [Day04 课程文档](<docs/lessons/Day04_TodoManager + 业务工具集.md>) | TodoManager 状态机 + `create_*` 工具集 + 工具内 Schema 兜底（✅ 已落地） |
 | [Day05 课程文档](<docs/lessons/Day05_多轮对话 + Memory 与 Session + HITL.md>) | 增量更新 + FileSession + ToolSuspend HITL（✅ 已落地） |
-| [Day06 课程文档](<docs/lessons/Day06_AG-UI 协议集成（基础）.md>) | Spring Boot starter + 17 个 AG-UI 事件 + Vue3 客户端 + 附录 C 版本兼容性速查（待落地） |
+| [Day06 课程文档](<docs/lessons/Day06_AG-UI 协议集成（基础）.md>) | Spring Boot starter + 17 个 AG-UI 事件 + Vue3 客户端 + 附录 C 版本兼容性速查（✅ 已落地） |
 | [Day07 课程文档](<docs/lessons/Day07_AG-UI 协议进阶 + 收尾验收.md>) | STATE_DELTA + HITL on AG-UI + HttpDispatcher（WireMock mock 后端）+ OTel/Jaeger/Micrometer（待落地） |
 | [docs/agents/](docs/agents/) | AS-Java 框架笔记 11 篇：Agent / Memory / Tool / Model / Harness 等 |
 | [CLAUDE.md](CLAUDE.md) | Claude Code 在本仓库内的工程约定 |

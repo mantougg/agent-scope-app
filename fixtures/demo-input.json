@@ -1,0 +1,7 @@
+{
+  "threadId": "t-demo-3",
+  "runId": "r-demo-3",
+  "messages": [
+    { "id": "m1", "role": "user", "content": "做一个员工档案管理，含姓名工号入职日期" }
+  ]
+}
