@@ -207,7 +207,7 @@ AS-Java 官方提供两份 LLM-readable 文档供 AI 编程助手消费：
 | 现象 | 原因 / 解法 |
 |------|------|
 | `-Dexec.mainClass=...` 不生效 | `pom.xml` 的 `<mainClass>` 必须用 `${exec.mainClass}` 占位符，不能是字面值 |
-| Windows 控制台中文乱码 | logback 必须配 `<charset>UTF-8</charset>`；cmd 可加 `chcp 65001` |
+| Windows 控制台中文乱码 | 三层都要打：(1) logback 编码器 `<charset>UTF-8</charset>`；(2) JVM 默认编码——`.mvn/jvm.config` 三行 `-Dfile.encoding=UTF-8 -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8`（JDK 17 必须，给 `exec:java` 用，因为 surefire argLine 只对 fork test JVM 生效）；(3) 终端：cmd 用 `chcp 65001`，Git Bash / Windows Terminal 默认 UTF-8 |
 | `IllegalStateException: API key 未配置` | 当前 shell 没有 `ARK_API_KEY`，Windows 用户级变量需新开终端 |
 | `model [primary] 被覆盖` 警告 | `initModels()` 被调多次；测试场景用 `ModelRegistry.reset()` |
 | `TimeoutException` | `application.conf` 的 `agent.timeout` 太短，调大到 `300s` |

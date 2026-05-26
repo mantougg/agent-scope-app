@@ -108,6 +108,7 @@ application-dev.yml
 # Generated files
 # --------------------------
 generated/
+data/sessions/
 
 # --------------------------
 # AI / Agent tools - local state / cache / scratch

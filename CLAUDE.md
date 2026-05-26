@@ -234,7 +234,7 @@ claude mcp add agentscope-docs -- uvx --from mcpdoc mcpdoc \
 | 现象 | 原因 / 解法 |
 |------|----|
 | `-Dexec.mainClass=...` 不生效 | pom 的 `<mainClass>` 写成了字面值。改成 `${exec.mainClass}` |
-| Windows 中文乱码 | logback 缺 UTF-8 charset / 终端 code page 是 GBK；详见 Day01 课程附录 B-2 |
+| Windows 中文乱码 | 三层都要打：(1) logback 编码器 `<charset>UTF-8</charset>`；(2) JVM 默认编码——`.mvn/jvm.config` 写 `-Dfile.encoding=UTF-8 -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8`（JDK 17 必须，JDK 18+ 仍建议）；(3) 终端 code page——cmd 用 `chcp 65001`，Git Bash / Windows Terminal 默认 UTF-8 |
 | `block()` 抛 `blocking call` 错误 | 在 Reactor 线程里调了 `.block()`，main 线程不会触发 |
 | 重启后 `[primary] 被覆盖` 警告 | 测试或多次 `initModels()` 调用导致；用 `ModelRegistry.reset()` 清理 |
 | `IllegalStateException: API key 未配置` | 当前 shell 没有 `ARK_API_KEY`，Windows 用户级变量需新开终端 |

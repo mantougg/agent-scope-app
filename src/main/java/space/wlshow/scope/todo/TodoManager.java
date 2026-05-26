@@ -95,4 +95,14 @@ public class TodoManager {
         }
         log.info("[Todo] LOADED size={} seq={}", items.size(), seq.get());
     }
+
+    public void replacePayload(String id, JsonNode newPayload) {
+        TodoItem cur = get(id);
+        if (cur.status() != TodoStatus.PENDING) {
+            throw new IllegalStateException("非 PENDING 不可改 payload: " + id);
+        }
+        TodoItem next = cur.withPayload(newPayload);
+        items.put(id, next);
+        log.info("[Todo] PAYLOAD-REPLACE id={}", id);
+    }
 }

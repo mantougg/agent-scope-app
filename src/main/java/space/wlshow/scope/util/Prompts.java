@@ -12,6 +12,8 @@ public final class Prompts {
 
     private static volatile String analystWithTools;
 
+    private static volatile String analystMultiRound;
+
     public static String analyst() {
         if (analyst == null) {
             synchronized (Prompts.class) {
@@ -41,6 +43,17 @@ public final class Prompts {
             }
         }
         return analystWithTools;
+    }
+
+    public static String analystMultiRound() {
+        if (analystMultiRound == null) {
+            synchronized (Prompts.class) {
+                if (analystMultiRound == null) {
+                    analystMultiRound = read("/prompts/analyst-multi-round.md");
+                }
+            }
+        }
+        return analystMultiRound;
     }
 
     private Prompts() {}

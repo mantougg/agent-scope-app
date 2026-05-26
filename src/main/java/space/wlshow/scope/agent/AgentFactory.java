@@ -1,5 +1,6 @@
 package space.wlshow.scope.agent;
 
+import io.agentscope.core.memory.Memory;
 import io.agentscope.core.tool.Toolkit;
 import io.agentscope.core.tool.ToolkitConfig;
 import space.wlshow.scope.config.AppConfig;
@@ -12,6 +13,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import space.wlshow.scope.todo.TodoManager;
 import space.wlshow.scope.tool.FrontendCreateTools;
+import space.wlshow.scope.tool.SubmitTool;
+import space.wlshow.scope.tool.TodoQueryTools;
+import space.wlshow.scope.tool.TodoUpdateTools;
 import space.wlshow.scope.util.Prompts;
 
 import java.util.List;
@@ -82,18 +86,22 @@ public final class AgentFactory {
      * - 强制 system prompt 引导 LLM 使用 create_* 工具
      * - parallel(true) 让多个 module/model 工具并发
      */
-    public static ReActAgent buildAnalystWithTools(TodoManager todos) {
+    public static ReActAgent buildAnalystWithTools(TodoManager todos, Memory memory) {
         initModels();
         Toolkit toolkit = new Toolkit(ToolkitConfig.builder()
                 .parallel(true)
                 .build());
         toolkit.registerTool(new FrontendCreateTools(todos));
+        toolkit.registerTool(new TodoQueryTools(todos));
+        toolkit.registerTool(new TodoUpdateTools(todos));
+        toolkit.registerTool(new SubmitTool(todos));
 
         return ReActAgent.builder()
                 .name("RequirementAnalyst")
                 .sysPrompt(Prompts.analystWithTools())
                 .model(ModelRegistry.resolve(DEFAULT_MODEL_ID))
                 .toolkit(toolkit)
+                .memory(memory)
                 .maxIters(15)        // 一个稍大点的需求可能调 1+5+5 ≈ 11 次工具
                 .build();
     }

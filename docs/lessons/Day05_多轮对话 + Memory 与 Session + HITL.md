@@ -249,16 +249,22 @@ mvn -q compile exec:java
 
 ### 5.1 `TodoQueryTools.java`
 
+> 📌 **必须打 `[Tool]` 日志**：沿用 Day 4 `FrontendCreateTools` 每个工具末尾 `log.info("[Tool] ...")` 的惯例，否则当 LLM 真的调了 `list_todos` 时你在 `logs/scope.log` 里看不到任何痕迹，没法判断 prompt 规则有没有生效。
+
 ```java
 package space.wlshow.scope.tool;
 
 import io.agentscope.core.tool.Tool;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import space.wlshow.scope.todo.TodoItem;
 import space.wlshow.scope.todo.TodoManager;
 
 import java.util.stream.Collectors;
 
 public class TodoQueryTools {
+
+    private static final Logger log = LoggerFactory.getLogger(TodoQueryTools.class);
 
     private final TodoManager todos;
 
@@ -268,7 +274,9 @@ public class TodoQueryTools {
           description = "列出当前所有待办（含 id / type / 名称 / 状态 / payload）。" +
                         "多轮对话第二轮起，新用户输入到来时必须先调一次。")
     public String listTodos() {
-        if (todos.size() == 0) return "当前无待办";
+        int size = todos.size();
+        log.info("[Tool] list_todos size={}", size);
+        if (size == 0) return "当前无待办";
         return todos.snapshot().stream()
                 .map(this::format)
                 .collect(Collectors.joining("\n"));
@@ -283,7 +291,10 @@ public class TodoQueryTools {
 
 ### 5.2 `TodoUpdateTools.java`
 
-> 📌 **沿用 Day 4 的 Schema 兜底模式**：修改后的 payload 必须再过一次 `module-spec.schema.json` / `data-model-spec.schema.json`，校验失败返回 `ERROR: ...` 给 LLM，**不**写入 TodoManager。复用 Day 4 `FrontendCreateTools` 的 `validate(SchemaValidator, JsonNode, String)` 私有方法范式即可。
+> 📌 **沿用 Day 4 的 Schema 兜底模式 + `[Tool]` 日志**：
+> - 修改后的 payload 必须再过一次 `module-spec.schema.json` / `data-model-spec.schema.json`，校验失败返回 `ERROR: ...` 给 LLM，**不**写入 TodoManager
+> - 每个工具方法在成功路径末尾 `log.info("[Tool] update_module/update_model ... payload=...")`，失败路径 `log.warn("[Tool] ... rejected/not-found ...")`
+> 否则 `[Todo] PAYLOAD-REPLACE` 是从 `TodoManager` 内部打的，工具层"没说话"——排查多轮对话时无从下手
 
 ```java
 package space.wlshow.scope.tool;
@@ -292,6 +303,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.agentscope.core.tool.Tool;
 import io.agentscope.core.tool.ToolParam;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import space.wlshow.scope.schema.SchemaValidator;
 import space.wlshow.scope.schema.ValidationError;
 import space.wlshow.scope.spec.FieldSpec;
@@ -305,6 +318,8 @@ import java.util.List;
 import java.util.Optional;
 
 public class TodoUpdateTools {
+
+    private static final Logger log = LoggerFactory.getLogger(TodoUpdateTools.class);
 
     private static final SchemaValidator MODULE_VAL =
             new SchemaValidator("/schemas/module-spec.schema.json");
@@ -324,10 +339,14 @@ public class TodoUpdateTools {
             @ToolParam(name = "newModuleDesc", description = "可选，为空表示不改") String newModuleDesc
     ) {
         Optional<TodoItem> found = findByModuleId(moduleId);
-        if (found.isEmpty()) return "ERROR: 未找到 moduleId=" + moduleId;
+        if (found.isEmpty()) {
+            log.warn("[Tool] update_module not-found moduleId={}", moduleId);
+            return "ERROR: 未找到 moduleId=" + moduleId;
+        }
 
         TodoItem it = found.get();
         if (it.status() != TodoStatus.PENDING) {
+            log.warn("[Tool] update_module rejected id={} status={}", it.id(), it.status());
             return "ERROR: " + it.id() + " 状态为 " + it.status() + "，不可修改";
         }
 
@@ -339,6 +358,8 @@ public class TodoUpdateTools {
         if (err != null) return err;
 
         todos.replacePayload(it.id(), p);
+        log.info("[Tool] update_module id={} newName={} newDesc={} payload={}",
+                it.id(), newModuleName, newModuleDesc, p);
         return "MODULE 已更新：" + it.id();
     }
 
@@ -350,10 +371,14 @@ public class TodoUpdateTools {
             @ToolParam(name = "appendFieldsJson") String appendFieldsJson
     ) {
         Optional<TodoItem> found = findByModelName(modelName);
-        if (found.isEmpty()) return "ERROR: 未找到 model name=" + modelName;
+        if (found.isEmpty()) {
+            log.warn("[Tool] update_model not-found modelName={}", modelName);
+            return "ERROR: 未找到 model name=" + modelName;
+        }
 
         TodoItem it = found.get();
         if (it.status() != TodoStatus.PENDING) {
+            log.warn("[Tool] update_model rejected id={} status={}", it.id(), it.status());
             return "ERROR: " + it.id() + " 状态为 " + it.status() + "，不可修改";
         }
 
@@ -366,6 +391,8 @@ public class TodoUpdateTools {
         if (err != null) return err;
 
         todos.replacePayload(it.id(), p);
+        log.info("[Tool] update_model id={} appended={} totalFields={} payload={}",
+                it.id(), appended.size(), arr.size(), p);
         return "MODEL 已追加 " + appended.size() + " 个字段到 " + it.id();
     }
 
@@ -375,6 +402,7 @@ public class TodoUpdateTools {
                 .map(ValidationError::message)
                 .toList();
         if (errors.isEmpty()) return null;
+        log.warn("[Tool] {} rejected: {}", tool, errors);
         return "ERROR: 参数不合规：" + String.join("; ", errors);
     }
 
@@ -615,13 +643,14 @@ LLM 续跑后：
 
 ### 7.2 `SubmitTool.java`
 
+> 📌 **description 必须显式拦住"LLM 工作流末尾自作主张调 submit"的常见误触**。早期版本 description 只写了"怎么调"，结果实测 `/run 做一个员工档案管理` 时模型把 submit 当作工作流收尾步骤一并调了——`SubmitTool` 抛 `ToolSuspendException` → 框架转 `TOOL_SUSPENDED` Msg → REPL 没把这条挂起接住 → 一个没回填的 `ToolUseBlock` 卡在 Memory 里 → 下一次 `/submit` 直接报 `Pending tool calls exist without results`。`description` 是模型实际看到的唯一行为约束（prompt 离它远），必须在这里把"什么时候不该调"写死。
+
 ```java
 package space.wlshow.scope.tool;
 
 import io.agentscope.core.tool.Tool;
 import io.agentscope.core.tool.ToolParam;
-// 1.0.12 的 ToolSuspendException 全限定名以你 jar 里实际为准
-import io.agentscope.core.exception.ToolSuspendException;
+import io.agentscope.core.tool.ToolSuspendException;     // ← 1.0.12 实际在 .tool 包，不是 .exception
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import space.wlshow.scope.todo.TodoItem;
@@ -639,7 +668,10 @@ public class SubmitTool {
 
     @Tool(name = "submit_to_frontend",
           description = "把所有 PENDING 待办下发前端。" +
-                        "调用时必须先以 confirmed=false 调一次，让系统等用户确认；" +
+                        "【调用时机】仅当用户明确表达「提交 / 确认 / 下发 / 发布 / 入库 / 保存生效」等意图时才调用；" +
+                        "需求分析、登记 create_app / create_module / create_model 的阶段一律不要调，" +
+                        "也不要把它当成工作流的收尾步骤——结束本轮工具调用直接用一句话向用户总结即可。" +
+                        "【调用方式】必须先以 confirmed=false 调一次，让系统等用户确认；" +
                         "用户确认后系统会自动让你恢复，再以 confirmed=true 调一次完成真正下发。")
     public String submit(@ToolParam(name = "confirmed",
                                     description = "用户是否已确认。第一次必填 false。") boolean confirmed) {
@@ -691,68 +723,145 @@ public class SubmitTool {
 
 ```java
 } else if (line.equals("/submit")) {
-    runSubmit(analyst, session, sc);   // sc 是 main 里已存在的 Scanner 实例
+    runSubmit(analystWithTools, session, sc);   // sc 是 main 里已存在的 Scanner 实例
     continue;
 }
 ```
 
 > ⚠️ **必须共用 main 里那一个 `Scanner`**，不要在 `runSubmit` 内 `new Scanner(System.in)`——两个 Scanner 抢同一个 `System.in` 缓冲区，Windows 下经常表现为"按 y 没反应 / 多吞一行"。
 
-`runSubmit` 的实现（简化版，把 ToolSuspend 处理封装一处）：
+> 📌 **1.0.12 suspend 的实际形态**（先看 jar 再写代码）：当 `SubmitTool.submit(false)` 抛 `ToolSuspendException` 时，AS-Java 1.0.12 框架内部 catch 它，调 `ToolResultBlock.suspended(toolUse, exception)` 生成一个 **`metadata[agentscope_suspended]=true`** 的 `ToolResultBlock`（自带 `id` / `name`），把这个 block 塞进返回 `Msg` 的 content，并把 `Msg.getGenerateReason()` 置为 `GenerateReason.TOOL_SUSPENDED`。所以 REPL 侧的检测只有**一条路**：看返回 Msg 的 `getGenerateReason()`。不需要再去单独维护"上一个 `ToolUseBlock.id`"——挂起 `ToolResultBlock` 本身就带着。文档早期写的 `lastToolUseId(agent)` / `isSuspend(e)` / `suspendReason(out)` 是版本敏感占位 facade，1.0.12 下不需要。
+
+`runSubmit` + `handleSuspend`：
 
 ```java
 private static void runSubmit(ReActAgent agent, FileSession session, Scanner sc) {
-    // 让 LLM 自己决定调 submit_to_frontend(false)
-    // 注意文案：用"请把所有待办下发前端"而不是"我确认了"，避免 LLM 直接走 confirmed=true 跳过挂起
+    log.info("[USER /submit]");
     Msg out;
     try {
+        // 文案用"请把所有待办下发前端"而不是"我确认了"，避免 LLM 跳过挂起直接走 confirmed=true
         out = agent.call(Msg.builder().textContent("请把所有待办下发前端").build())
-                .timeout(AppConfig.timeout()).block();
+                .timeout(AppConfig.timeout())
+                .block();
     } catch (Exception e) {
-        // 不同版本 AS-Java 暴露 suspend 的方式不同，可能是异常也可能是 GenerateReason
-        if (!isSuspend(e)) throw e;
-        handleSuspend(agent, session, sc, suspendMessage(e));
+        // 1.0.12 框架会把 ToolSuspendException 转成 TOOL_SUSPENDED Msg，正常路径走不到这里；
+        // 保留 catch 是为了兜底未来版本如果改成"直接抛"也能给出可读错误而不是栈撕裂。
+        log.error("/submit failed: {}", e.toString(), e);
+        System.out.println("(error: " + e.getMessage() + ")");
+        session.save();
         return;
     }
 
-    if (out != null && isSuspendOutput(out)) {
-        String reason = suspendReason(out);
-        handleSuspend(agent, session, sc, reason);
-    } else {
-        System.out.println("[ASSISTANT] " + (out == null ? "" : out.getTextContent()));
+    try {
+        if (out != null && out.getGenerateReason() == GenerateReason.TOOL_SUSPENDED) {
+            handleSuspend(agent, session, sc, out);
+        } else {
+            System.out.println("[ASSISTANT] " + (out == null ? "(空)" : out.getTextContent()));
+        }
+        printTodos();
+    } finally {
+        session.save();
     }
-    session.save();
 }
 
-private static void handleSuspend(ReActAgent agent, FileSession session, Scanner sc, String reason) {
+private static void handleSuspend(ReActAgent agent, FileSession session, Scanner sc, Msg suspended) {
+    // 从挂起 Msg 的 content 里捞出 isSuspended()==true 的 ToolResultBlock：id / name 全在它身上
+    ToolResultBlock pending = suspended.getContentBlocks(ToolResultBlock.class).stream()
+            .filter(ToolResultBlock::isSuspended)
+            .findFirst()
+            .orElse(null);
+    if (pending == null) {
+        log.warn("[Submit] TOOL_SUSPENDED 但没找到 isSuspended() 的 ToolResultBlock");
+        System.out.println("[ASSISTANT] " + suspended.getTextContent());
+        return;
+    }
+
+    // 挂起 reason = SubmitTool 抛 ToolSuspendException 时携带的文本（含 PENDING 清单）
+    String reason = pending.getOutput().stream()
+            .filter(TextBlock.class::isInstance)
+            .map(b -> ((TextBlock) b).getText())
+            .reduce((a, b) -> a + "\n" + b)
+            .orElse("(no reason)");
+
     System.out.println("[CONFIRM?]");
     System.out.println(reason);
     System.out.print("确认下发？(y/N): ");
     String ans = sc.nextLine().trim().toLowerCase();   // 复用外层 Scanner
-    String reply = "y".equals(ans) || "yes".equals(ans) ? "USER_CONFIRMED" : "USER_REJECTED";
+    String reply = ("y".equals(ans) || "yes".equals(ans)) ? "USER_CONFIRMED" : "USER_REJECTED";
+    log.info("[Submit] toolUseId={} reply={}", pending.getId(), reply);
 
-    // 拿到挂起的 ToolUseBlock id（不同版本 API 略不同）
-    String toolUseId = lastToolUseId(agent);
-
-    // 回填 ToolResult：这里 builder 长形式无法回避，因为要构造 ToolResultBlock
+    // 回填 ToolResult：role=TOOL + 同样的 id/name + 文本 USER_CONFIRMED/USER_REJECTED
+    // 这里 builder 走长形式（role / content），不是 textContent 短形式——因为 content 是 ToolResultBlock 不是 TextBlock
     Msg toolResultMsg = Msg.builder()
             .role(MsgRole.TOOL)
-            .content(ToolResultBlock.of(toolUseId, "submit_to_frontend",
+            .content(ToolResultBlock.of(
+                    pending.getId(),
+                    pending.getName(),
                     TextBlock.builder().text(reply).build()))
             .build();
 
-    Msg out = agent.call(toolResultMsg).timeout(AppConfig.timeout()).block();
-    System.out.println("[ASSISTANT] " + (out == null ? "" : out.getTextContent()));
-    System.out.println("=== Todos (" + session.todos.size() + ") ===");
-    session.todos.snapshot().forEach(it -> System.out.printf("  %s  %-25s  %s%n",
-            it.id(), it.targetName(), it.status()));
-    session.save();
+    try {
+        Msg next = agent.call(toolResultMsg).timeout(AppConfig.timeout()).block();
+        System.out.println("[ASSISTANT] " + (next == null ? "(空)" : next.getTextContent()));
+    } catch (Exception e) {
+        log.error("/submit resume failed: {}", e.toString(), e);
+        System.out.println("(error: " + e.getMessage() + ")");
+    }
 }
 ```
 
-> 📌 几点关键约定，需对照仓库现状：
-> - **`Msg` 短/长形式**：仓库主路径（`ScopeApp.java`、`WireMockAgentTest`）用 `Msg.builder().textContent(...).build()`；这里回填 `ToolResultBlock` 时不得不走长形式 `role(...).content(...).build()`，是 builder 风格不同**不是** API 不同
-> - **`lastToolUseId(agent)` / `isSuspend(e)` / `suspendReason(out)`** 这些工具方法**根据你 AS-Java 1.0.12 的实际 API** 写。本课程不锁死签名，主要让你看清流程。如果你 jar 里能直接读到 `GenerateReason.TOOL_SUSPENDED` + `ToolUseBlock.id`，直接走那条路
+> 📌 几点关键约定：
+> - **`Msg` 短/长形式**：仓库主路径（`ScopeApp.java`、`WireMockAgentTest`）用 `Msg.builder().textContent(...).build()`；这里回填 `ToolResultBlock` 时必须走长形式 `role(...).content(ToolResultBlock.of(id, name, TextBlock)).build()`，因为 content 已经不是纯文本。
+> - **不用 `lastToolUseId(agent)`**：1.0.12 把 id 直接写在挂起的 `ToolResultBlock` 上，从返回 Msg 取即可。如果你用的是更早的 patch 版本发现 Msg 上拿不到 id，再退而求其次去 Memory 翻最后一个 `ToolUseBlock`。
+> - **`finally { session.save(); }`**：suspend 路径会 sc.nextLine() 阻塞，期间崩溃也要保住已落 TodoManager 的待办——所以 save 必须放在 finally。
+
+### 8.1.1 `/run` 也要接 suspend（坑！）
+
+文档早期版本只在 `/submit` 加挂起处理，实测**翻车**：
+
+```
+> /run 做一个员工档案管理
+... LLM 调了 create_app / create_module / create_model 之后
+... 模型把 submit_to_frontend 当成工作流收尾步骤一并调了
+[Submit] suspend with 3 items
+[ASSISTANT]                    ← /run 没认 TOOL_SUSPENDED，打了个空字符串就返回
+=== Todos (3) ===   PENDING / PENDING / PENDING
+> /submit
+java.lang.IllegalStateException: Pending tool calls exist without results.
+  Pending IDs: [call_xxxxxxxxxx]
+```
+
+根因：`/run` 拿到 `TOOL_SUSPENDED` Msg 后没把里面的挂起 `ToolUseBlock` 续完，那条 `tool_use` 永远留在 Memory 里。下一次 `agent.call(...)`（不管是 `/run` 还是 `/submit`）一进 `ReActAgent.doCall` 头部检查就直接抛 `Pending tool calls exist without results`。
+
+**Phase 4 的 description guard 是治本，Phase 5 的 `/run` suspend 兜底是治标**，两道并行：
+
+```java
+if (line.startsWith("/run ")) {
+    ...
+    try {
+        Msg out = analystWithTools.call(Msg.builder().textContent(req).build())
+                .timeout(AppConfig.timeout())
+                .block();
+        // LLM 可能在 /run 这一轮就自作主张调 submit_to_frontend(confirmed=false)，触发挂起。
+        // 不处理就会把没回填的 tool_use 留在 Memory，下次 agent.call 会抛
+        // "Pending tool calls exist without results"。这里走和 /submit 同一套 handleSuspend。
+        if (out != null && out.getGenerateReason() == GenerateReason.TOOL_SUSPENDED) {
+            handleSuspend(analystWithTools, session, sc, out);
+        } else {
+            System.out.println("[ASSISTANT] " + (out == null ? "(空)" : out.getTextContent()));
+        }
+        printTodos();
+    } catch (Exception e) {
+        log.error("/run failed: {}", e.toString(), e);
+        System.out.println("(error: " + e.getMessage() + ")");
+    } finally {
+        session.save();
+    }
+    continue;
+}
+```
+
+> 📌 **不要只靠 prompt / description 拦**。LLM 行为是概率的，prompt 写得再死，遇到大需求 / 长上下文还是有概率绕开。REPL 侧的 suspend 兜底是 last line of defense——不管 LLM 在哪一轮、出于什么理由调了 `submit_to_frontend(false)`，REPL 都应当能弹 y/N 把 ToolResult 续上。
 
 ### 8.2 跑一遍
 
@@ -875,6 +984,8 @@ git commit -m "day5: 多轮对话 + Session 持久化 + CLI HITL
 - TodoItem.withPayload + TodoManager.replacePayload 对称 Day 4 的 withStatus
 - FileSession 把 TodoManager 落 data/sessions/<id>.json（Memory 不持久化，由 prompt 约束 list_todos 兜底）
 - SubmitTool 用 ToolSuspendException 实现 CLI HITL，y/n 回填 ToolResult
+- SubmitTool.description 加【调用时机】guard，拦住 LLM 把 submit 当工作流收尾乱调
+- ScopeApp 的 /run 也接 TOOL_SUSPENDED 兜底，防止 LLM 中途挂起后 Memory 卡死
 - 端到端剧本测试骨架：增量追加 → y 确认 / n 拒绝
 - data/sessions/ 加入 .gitignore"
 ```
@@ -897,8 +1008,10 @@ git commit -m "day5: 多轮对话 + Session 持久化 + CLI HITL
 |------|-----------|
 | 第二轮 LLM 不调 `list_todos` 直接重生 | system prompt 不够强；查 `analyst-multi-round.md` 是否真用上；模型可能不擅长长 prompt，换 qwen-max / doubao-pro |
 | `update_module` 找不到 moduleId | LLM 把 moduleId 拼错（小驼峰漂移）；让 `list_todos` 输出更明显，prompt 里强调"复制原 id"  |
-| `submit_to_frontend` 没挂起，直接返回 | ToolSuspendException 全限定名错；查 jar 里实际类名（`grep -r "SuspendException" agentscope-1.0.12*`）|
-| 回填 ToolResult 报"unknown toolUseId" | `lastToolUseId` 拿错；通常拿最后一个 `ToolUseBlock`，但 parallel(true) 时可能有多个，按工具名筛 |
+| `submit_to_frontend` 没挂起，直接返回 | ToolSuspendException 全限定名错；1.0.12 实际是 `io.agentscope.core.tool.ToolSuspendException`（**不是** `.exception` 子包）|
+| `/submit` 报 `Pending tool calls exist without results. Pending IDs: [call_xxx]` | LLM 在上一轮 `/run` 里就调了 `submit_to_frontend(false)`，REPL 没接挂起 → 未回填的 `ToolUseBlock` 卡在 Memory 里。**`/run` 也必须走 `handleSuspend`**（见 § 8.1.1），同时强化 `SubmitTool.description` 的"调用时机"段。临时排障：`exit` 重启 REPL（Memory 不持久化，会清空），保留 `data/sessions/<id>.json` 即可 |
+| `/run` 末尾 `[ASSISTANT]` 是空字符串，日志却看到 `[Submit] suspend with N items` | 同上：LLM 在 `/run` 中误触发 submit；REPL 拿到的 Msg `getGenerateReason()==TOOL_SUSPENDED`，文本字段为空，不接就丢——见 § 8.1.1 |
+| 回填 ToolResult 报"unknown toolUseId" | 1.0.12 下挂起的 `ToolResultBlock.getId()` 直接取即可，不用 `lastToolUseId(agent)`；老版本回退到"按工具名筛最后一个 `ToolUseBlock`" |
 | 重启后 todo-N 序号又从 1 开始 | `TodoManager.loadState` 没读 `seq`；本课的实现已读，检查 `getState/loadState` 是否对称 |
 | `data/sessions/` 进了 git | `.gitignore` 没生效；用 `git rm --cached -r data/sessions/` 取消跟踪 |
 | Memory 越积越长导致 token 超 | Day 7 升级到 Harness 的 Compaction；Day 5 暂时用 `if (memory.size() > 30) memory.clearOldest()` |
@@ -951,7 +1064,57 @@ Hook 路径的好处是**工具实现保持纯净**，缺点是从 LLM 视角看
 
 ---
 
-## 13. 写在 Day 6 之前
+## 13. 附录 C · 实现与文档差异回顾
+
+落地 Phase 4 / Phase 5 时，**实际跑通的代码与本文 §7.2 / §8.1 早期示例有不小偏离**。这一节把每条偏离原原本本记下来，给后续学员一份 errata，也给文档作者一面镜子。
+
+### 13.1 偏离清单
+
+| 文档原样 | 实际落地 | 偏离原因 |
+|---|---|---|
+| `import io.agentscope.core.exception.ToolSuspendException;`（§7.2）| `import io.agentscope.core.tool.ToolSuspendException;` | 1.0.12 sources jar 里实际包名是 `core.tool`，文档作者写示例时凭命名习惯猜了 `.exception`，没翻 jar |
+| `@Tool description` 只写"怎么调"（§7.2） | description 多了【调用时机】段，明确禁止在需求分析阶段调 | 实测发现 LLM 把 `submit_to_frontend` 当成工作流收尾，需求分析末尾自作主张调它，prompt 拦不住 |
+| `runSubmit` 用 `isSuspendOutput(out)` / `suspendReason(out)` 占位 facade（§8.1） | 用 `out.getGenerateReason() == GenerateReason.TOOL_SUSPENDED` 一条路 | 文档为了兼容"未来 patch 版本可能改成抛异常"留了 facade 抽象；1.0.12 实际只有一条路，不需要 facade |
+| `handleSuspend(..., String reason)` + 单独 `lastToolUseId(agent)` 取 id（§8.1） | `handleSuspend(..., Msg suspended)`，从挂起 `ToolResultBlock` 上**直接** `getId()` / `getName()` / `getOutput()` | 1.0.12 框架内部 catch `ToolSuspendException` 后调 `ToolResultBlock.suspended(toolUse, exception)` 生成一个 `isSuspended()==true` 的块，**自带 id / name / reason text**，根本不用单独再翻 Memory 拿 id |
+| 只在 `/submit` 接挂起（§8.1） | `/run` **也**走 `handleSuspend`（§8.1.1 新增） | 实测翻车：LLM 在 `/run` 一轮里就调了 `submit_to_frontend(false)`，`/run` 没接挂起 → 未回填 `tool_use` 卡死 Memory → 下次 `agent.call` 直接抛 `Pending tool calls exist without results` |
+| `AgentFactory.buildAnalystWithTools` 用 `Prompts.analystMultiRound()`（§4.1） | 仓库 commit `90bea1d` 后仍用 `Prompts.analystWithTools()`（Day 4 prompt） | Phase 1 prompt 切换"忘了切"。`analyst-multi-round.md` 写好了、`Prompts.analystMultiRound()` 也加了，但 `AgentFactory` 那一行 `.sysPrompt(...)` 没改。需要补一刀 |
+| Phase 6 commit 清单（§9.3）| 实际 commit 还需要包含 `SubmitTool` description 改动、`ScopeApp` 的 `/run` suspend 兜底改动 | Phase 4 / Phase 5 / Phase 6 之间的微改没回写到 9.3 的清单里 |
+
+### 13.2 偏离背后的四类根因
+
+把上面 7 条对照归纳，差异主要来自这四类：
+
+**(a) 文档写作时对 jar 不确信，留了过多版本敏感占位（占 4 条）**
+
+`isSuspend(e)` / `suspendMessage(e)` / `isSuspendOutput(out)` / `suspendReason(out)` / `lastToolUseId(agent)` —— 这些方法名都是"等学员按 jar 实际签名替换"的 facade。占位的本意是"不锁死签名"，结果是学员（包括 LLM-coder）真要落地时多了一道**翻译成本**：要先把这一堆假名翻译到 `getGenerateReason()` / `getContentBlocks(ToolResultBlock.class).filter(isSuspended)`。
+
+更糟糕的是，占位 facade 容易把"实现该有几个文件、几条路"的拓扑也搞错。文档的 `handleSuspend(String reason)` 默认 reason 是个字符串，但 1.0.12 实际你要的是整个 Msg（要从里面捞 id + name + reason），signature 一开始就错了。
+
+**(b) 文档写作时没跑过 LLM 真实路径，没意识到 LLM 会"工作流末尾顺手调 submit"（占 2 条）**
+
+`description` 的 guard 段、`/run` 的 suspend 兜底，都是实测翻车后才发现的需求。文档的 §0 剧本默认 LLM 守规矩、只在 `/submit` 时才调 submit ——这是**作者视角**，不是**模型视角**。从模型视角看，`submit_to_frontend` 一注册进 Toolkit 就是工具集的一员，description 没拦就当成可以随便调；prompt 离 tool description 远，约束弱。
+
+`/run` 没接 suspend 是设计冗余的缺失：HITL 兜底必须在 `agent.call` **每一个**出口都接，不只是用户敲 `/submit` 那一次。这条偏离本质是"防御性编程做到一半"。
+
+**(c) Phase 之间的依赖没显式串起来（占 1 条）**
+
+`buildAnalystWithTools` 该用哪份 prompt 是 Phase 1 的事，但它对 Phase 4 `SubmitTool` 的行为约束有跨 Phase 的影响（prompt 的"# 提交"段是否生效）。文档把每个 Phase 当独立模块写，没在 Phase 1 末尾打一个"如果你跳过这步，Phase 4 的 LLM 行为约束会少一道"的醒目提示，结果实际落地时 Phase 1 切了 Memory 没切 prompt，没人发现。
+
+**(d) 文档 commit 清单（§9.3）没回写微改（占 1 条）**
+
+Phase 4 / Phase 5 / Phase 6 之间互相 patch 时新增的小改动（description guard、`/run` suspend 分支），没回写到 9.3 的 `git add` 清单里。这是工程上的小漏，但学员照清单 commit 会落下文件。
+
+### 13.3 给后续课程文档的写作建议
+
+1. **先查 jar，再写示例代码**——`@Tool` / `ToolSuspendException` / `ToolResultBlock` / `GenerateReason` 这些 API 都能用 `jar -tf agentscope-1.0.12-sources.jar | grep XX` 验，写示例前花 30 秒查一遍包路径，能挡掉 §13.1 第 1 / 4 行整类偏离。
+2. **占位 facade 要伴随"占位翻译表"**——如果某段示例用了 `isSuspend(e)` 这种占位名，文档必须紧跟一个翻译表：「在 1.0.12 这是 X，在 1.1.0 这是 Y」。不要把翻译甩给学员。
+3. **HITL 设计要枚举所有 agent.call 出口**——不止 `/submit`，凡是会 `agent.call(...)` 的命令（`/run` / `/parse` / 未来的 `/replay`）都得接 suspend。文档写 HITL 时应当先列"agent.call 出口表"，每个出口都画进时序图。
+4. **Phase 之间的依赖要"前向引用"**——Phase 1 末尾应当说"如果你跳过 prompt 切换，Phase 4 / Phase 5 会出现什么具体症状"，不要等学员自己撞墙。
+5. **Commit 清单（§9.x）应当在每个 Phase 结束后回写**——Phase 4 / Phase 5 改了哪些文件，加进 Phase 6 的 `git add` 清单。否则清单天生滞后。
+
+---
+
+## 14. 写在 Day 6 之前
 
 明天 Day 6 我们会：
 

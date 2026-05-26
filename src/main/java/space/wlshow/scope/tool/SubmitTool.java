@@ -1,0 +1,57 @@
+package space.wlshow.scope.tool;
+
+import io.agentscope.core.tool.Tool;
+import io.agentscope.core.tool.ToolParam;
+import io.agentscope.core.tool.ToolSuspendException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import space.wlshow.scope.todo.TodoItem;
+import space.wlshow.scope.todo.TodoManager;
+import space.wlshow.scope.todo.TodoStatus;
+
+import java.util.List;
+
+public class SubmitTool {
+
+    private static final Logger log = LoggerFactory.getLogger(SubmitTool.class);
+    private final TodoManager todos;
+
+    public SubmitTool(TodoManager todos) { this.todos = todos; }
+
+    @Tool(name = "submit_to_frontend",
+            description = "把所有 PENDING 待办下发前端。" +
+                    "【调用时机】仅当用户明确表达「提交 / 确认 / 下发 / 发布 / 入库 / 保存生效」等意图时才调用；" +
+                    "需求分析、登记 create_app / create_module / create_model 的阶段一律不要调，" +
+                    "也不要把它当成工作流的收尾步骤——结束本轮工具调用直接用一句话向用户总结即可。" +
+                    "【调用方式】必须先以 confirmed=false 调一次，让系统等用户确认；" +
+                    "用户确认后系统会自动让你恢复，再以 confirmed=true 调一次完成真正下发。")
+    public String submit(@ToolParam(name = "confirmed",
+            description = "用户是否已确认。第一次必填 false。") boolean confirmed) {
+        List<TodoItem> pending = todos.snapshot().stream()
+                .filter(it -> it.status() == TodoStatus.PENDING).toList();
+
+        if (pending.isEmpty()) return "没有 PENDING 待办，无需下发";
+
+        if (!confirmed) {
+            String summary = pending.stream()
+                    .map(it -> String.format("- %s [%s] %s", it.id(), it.type(), it.targetName()))
+                    .reduce((a, b) -> a + "\n" + b).orElse("");
+            log.info("[Submit] suspend with {} items", pending.size());
+            throw new ToolSuspendException("AWAITING_USER_CONFIRMATION\n" + summary);
+        }
+
+        // confirmed=true：真发（Day 5 dry-run，只是把状态机走一遍）
+        // Day 4 设计意图：RUNNING 表示"工具下发中"。Day 6 接前端后，markRunning 和
+        // markSuccess 之间会插入实际 SSE 下发 + 等待前端 ACK 的逻辑；
+        // 本日 dry-run 直接顺一遍只为把状态机跑通。
+        int n = 0;
+        for (TodoItem it : pending) {
+            todos.markRunning(it.id());
+            // TODO Day 6：换成 bridge.dispatch(it).block() 后再 markSuccess
+            todos.markSuccess(it.id());
+            n++;
+        }
+        log.info("[Submit] dispatched {} items (dry-run)", n);
+        return "已下发 " + n + " 项（dry-run，Day 6 接前端）";
+    }
+}

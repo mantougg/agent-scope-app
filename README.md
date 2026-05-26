@@ -255,7 +255,7 @@ agent {
 | `/parse` 输出 `[PARSE-FAIL] LLM 输出连续 3 次不符合 schema` | 大概率 prompt 漂移或 schema 太严；用 `SchemaValidatorTest` 拿同一份 JSON 跑一遍定位 |
 | `/run` 后 LLM 直接吐 JSON 文本而不调工具 | system prompt 没生效或模型不支持 function calling；确认 `buildAnalystWithTools` 用的是 `Prompts.analystWithTools()` |
 | `/run` 后看到 `[Tool] create_* rejected` 但 LLM 不重试 | `maxIters` 用尽；调高 `AgentFactory.buildAnalystWithTools` 里的 `maxIters` |
-| Windows 控制台中文乱码 | 已在 `logback.xml` 配置 `<charset>UTF-8</charset>`；cmd 用户可加 `chcp 65001` |
+| Windows 控制台中文乱码 | 三层都要打：(1) `logback.xml` 已配 `<charset>UTF-8</charset>`；(2) `.mvn/jvm.config` 已配 `-Dfile.encoding=UTF-8 -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8`（JDK 17 给 `exec:java` 必须）；(3) 终端 code page——cmd 用 `chcp 65001`，Git Bash / Windows Terminal 默认 UTF-8 |
 
 更多排错见 [Day01 课程附录 B](<docs/lessons/Day01_项目骨架 + AS-Java Hello World.md>)、[Day03 故障排查表](<docs/lessons/Day03_需求解析 + Structured Output.md>) 与 [Day04 故障排查表](<docs/lessons/Day04_TodoManager + 业务工具集.md>)。
 

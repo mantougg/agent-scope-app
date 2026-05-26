@@ -36,4 +36,9 @@ public record TodoItem(
     public TodoItem withStatus(TodoStatus next, String err) {
         return new TodoItem(id, type, targetName, payload, next, err, createdAt, Instant.now());
     }
+
+    public TodoItem withPayload(JsonNode newPayload) {
+        return new TodoItem(id, type, targetName, newPayload, status, errorMessage,
+                createdAt, Instant.now());
+    }
 }
