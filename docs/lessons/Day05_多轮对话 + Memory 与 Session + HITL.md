@@ -184,29 +184,54 @@ ReActAgent analyst = AgentFactory.buildAnalystWithTools(todos, memory);
 
 ### 4.2 新 prompt `prompts/analyst-multi-round.md`
 
+> ⚠️ **必须自包含**：AS-Java 的 `sysPrompt` 是单一字符串，切到这份 prompt 后，Day 4 那份 `analyst-with-tools.md` **不会**自动叠加。早期文档曾写「按 Day 4 的工作流」这种跨文件指代，模型其实看不到 Day 4 prompt，会丢掉"主键必须 `name=id/long/primary`、主从单据用 `array.subs`、camelCase、`usage` 取值、假设 vs 反问二分"等 prompt-only 约束（Schema 只兜得住命名 / dataType / type 三条枚举类约束，业务规则兜不住）。所以这里把 Day 4 的工作流 + 字段规范 + 不确定信息处理**全部内联**进来，再追加 Day 5 的多轮 + 提交规则。
+
 ```markdown
-你是「需求分析助手」。多轮对话规则：
+你是「需求分析助手」。你必须**通过工具调用**把分析结果交付，不要直接输出 JSON 文本，也不要解释。
 
-# 第一轮
-- 用户给的是一份完整或半完整的需求
-- 你按 Day 4 的工作流：create_app → create_module ×N → create_model ×N → 用 1 句话总结 + 列出假设和反问
+# 第一轮工作流（用户给完整或半完整需求时）
 
-# 第二轮起
-- 用户可能在补充、修正、删除
-- **必须先调 list_todos()**，看清当前待办再做判断
-- 三种动作：
-  1. **ADD**：用户提出全新模块或模型 → 用 create_module / create_model
-  2. **MODIFY**：用户改既有模块的字段或 desc → 用 update_module / update_model
-  3. **明确删除**：用户说"删掉 xxx" → 用 delete_module / delete_model（Day 5 不实现，先记 question）
+1. 先用一句话默念你将拆出几个 Module / 几个 Model（不要打印出来）
+2. 调用 `create_app` 登记应用，**恰好一次**
+3. 对每个业务模块依次调用 `create_module`
+4. 对每个数据模型依次调用 `create_model`，注意：
+    - 每个 model 必须包含 `name=id, dataType=long, usage=primary` 的主键
+    - 含明细的单据用 `type=TASK_MASTER_SLAVE`，明细放在 `dataType=array` 字段的 `subs` 数组里
+5. 全部调完后用 1 句中文短消息总结你做了什么，并把假设和反问一起列出，**不要再附 JSON**
+
+# 第二轮起（用户在补充、修正、删除）
+
+1. **必须先调 `list_todos()`**，看清当前待办再做判断
+2. 三种动作：
+    - **ADD**：用户提出全新模块或模型 → 用 `create_module` / `create_model`
+    - **MODIFY**：用户改既有模块的字段或 desc → 用 `update_module` / `update_model`
+    - **明确删除**：用户说"删掉 xxx" → Day 5 暂不实现 `delete_*`，先在总结里记一条 question 等下一轮再处理
+
+# 字段规范（每一轮都务必严格遵守）
+
+- `moduleId` / `app.name` / `model.name` / `field.name`：camelCase 英文
+- `dataType` ∈ `{long, int, double, string, boolean, date, array}`
+- `model.type` ∈ `{ENTITY, TASK, TASK_MASTER_SLAVE}`
+- `usage`：主键写 `"primary"`，外键写 `"foreign"`，其他写 `""`
+
+# 不确定信息怎么办
+
+- 用户没说但你做了假设的，**先按你的判断调工具**，最后总结里告诉用户你做了哪些假设
+- 用户必须回答才能继续的（如"是否需要附件"），**直接在总结里问**，等用户下一轮回复，**这一轮不要瞎编**
 
 # 严禁
-- 重生整组待办（这会清掉用户已经看过/将要确认的）
-- 把已存在的 module 用同名 `create_*` 再登记一遍（会被 Schema 拒）
 
-# 提交
-- 用户说"确认"/"提交"/"发布"等时，调 submit_to_frontend(confirmed=false) 先列出待办给用户预览
-- 用户再次确认时（外层会自动回填 USER_CONFIRMED），系统会让你恢复，再调一次 submit_to_frontend(confirmed=true)
+- 重生整组待办（这会清掉用户已经看过/将要确认的）
+- 把已存在的 module / model 用同名 `create_*` 再登记一遍（会被 Schema 拒，且会污染序号）
+
+# 提交（仅当用户明确表达提交意图）
+
+- 用户说"确认 / 提交 / 发布 / 下发 / 入库 / 保存生效"等时，调 `submit_to_frontend(confirmed=false)` 先列出待办给用户预览
+- 用户再次确认时（外层会自动回填 `USER_CONFIRMED`），系统会让你恢复，再调一次 `submit_to_frontend(confirmed=true)` 完成下发
+- **严禁**在需求分析阶段（用户没明确说提交）自作主张调 `submit_to_frontend` —— 它**不是**工作流的收尾步骤；登记 `create_*` 调完直接用 1 句话总结即可
 ```
+
+> 📌 **prompt 工程的实战准则**：prompt 应当像一封信，不是一段代码。当读者（模型）跨段引用某个上下文（"按 Day 4 的工作流"）时，那个上下文必须就在同一封信里。DRY 在 prompt 写作里优先级很低——多写几行重复内容换"打开一个文件就看到全部"完全值。
 
 ### 4.3 `Prompts.analystMultiRound()`
 
@@ -1077,7 +1102,7 @@ Hook 路径的好处是**工具实现保持纯净**，缺点是从 LLM 视角看
 | `runSubmit` 用 `isSuspendOutput(out)` / `suspendReason(out)` 占位 facade（§8.1） | 用 `out.getGenerateReason() == GenerateReason.TOOL_SUSPENDED` 一条路 | 文档为了兼容"未来 patch 版本可能改成抛异常"留了 facade 抽象；1.0.12 实际只有一条路，不需要 facade |
 | `handleSuspend(..., String reason)` + 单独 `lastToolUseId(agent)` 取 id（§8.1） | `handleSuspend(..., Msg suspended)`，从挂起 `ToolResultBlock` 上**直接** `getId()` / `getName()` / `getOutput()` | 1.0.12 框架内部 catch `ToolSuspendException` 后调 `ToolResultBlock.suspended(toolUse, exception)` 生成一个 `isSuspended()==true` 的块，**自带 id / name / reason text**，根本不用单独再翻 Memory 拿 id |
 | 只在 `/submit` 接挂起（§8.1） | `/run` **也**走 `handleSuspend`（§8.1.1 新增） | 实测翻车：LLM 在 `/run` 一轮里就调了 `submit_to_frontend(false)`，`/run` 没接挂起 → 未回填 `tool_use` 卡死 Memory → 下次 `agent.call` 直接抛 `Pending tool calls exist without results` |
-| `AgentFactory.buildAnalystWithTools` 用 `Prompts.analystMultiRound()`（§4.1） | 仓库 commit `90bea1d` 后仍用 `Prompts.analystWithTools()`（Day 4 prompt） | Phase 1 prompt 切换"忘了切"。`analyst-multi-round.md` 写好了、`Prompts.analystMultiRound()` 也加了，但 `AgentFactory` 那一行 `.sysPrompt(...)` 没改。需要补一刀 |
+| `AgentFactory.buildAnalystWithTools` 用 `Prompts.analystMultiRound()`（§4.1） | 仓库一度仍用 `Prompts.analystWithTools()`（Day 4 prompt） | Phase 1 prompt 切换"忘了切"。`analyst-multi-round.md` 写好了、`Prompts.analystMultiRound()` 也加了，但 `AgentFactory` 那一行 `.sysPrompt(...)` 没改 →  **已修复**：切到 `analystMultiRound()` + 把 `analyst-multi-round.md` 重写为自包含（内联 Day 4 工作流 + 字段规范 + 不确定信息处理，避免跨文件指代失效） |
 | Phase 6 commit 清单（§9.3）| 实际 commit 还需要包含 `SubmitTool` description 改动、`ScopeApp` 的 `/run` suspend 兜底改动 | Phase 4 / Phase 5 / Phase 6 之间的微改没回写到 9.3 的清单里 |
 
 ### 13.2 偏离背后的四类根因
@@ -1100,6 +1125,8 @@ Hook 路径的好处是**工具实现保持纯净**，缺点是从 LLM 视角看
 
 `buildAnalystWithTools` 该用哪份 prompt 是 Phase 1 的事，但它对 Phase 4 `SubmitTool` 的行为约束有跨 Phase 的影响（prompt 的"# 提交"段是否生效）。文档把每个 Phase 当独立模块写，没在 Phase 1 末尾打一个"如果你跳过这步，Phase 4 的 LLM 行为约束会少一道"的醒目提示，结果实际落地时 Phase 1 切了 Memory 没切 prompt，没人发现。
 
+还有一层更隐蔽的：**prompt 文件之间不能跨文件指代**。`analyst-multi-round.md` 早期版本写"按 Day 4 的工作流"，但模型看到的 `sysPrompt` 是**单一字符串**，Day 4 prompt 根本不在 context 里——跨文件指代等于断链。本课修复后已把 Day 4 工作流 + 字段规范 + 不确定信息处理全部**内联**进 multi-round prompt，§4.2 的 ⚠️ 警示框就在讲这件事。
+
 **(d) 文档 commit 清单（§9.3）没回写微改（占 1 条）**
 
 Phase 4 / Phase 5 / Phase 6 之间互相 patch 时新增的小改动（description guard、`/run` suspend 分支），没回写到 9.3 的 `git add` 清单里。这是工程上的小漏，但学员照清单 commit 会落下文件。
@@ -1110,7 +1137,8 @@ Phase 4 / Phase 5 / Phase 6 之间互相 patch 时新增的小改动（descripti
 2. **占位 facade 要伴随"占位翻译表"**——如果某段示例用了 `isSuspend(e)` 这种占位名，文档必须紧跟一个翻译表：「在 1.0.12 这是 X，在 1.1.0 这是 Y」。不要把翻译甩给学员。
 3. **HITL 设计要枚举所有 agent.call 出口**——不止 `/submit`，凡是会 `agent.call(...)` 的命令（`/run` / `/parse` / 未来的 `/replay`）都得接 suspend。文档写 HITL 时应当先列"agent.call 出口表"，每个出口都画进时序图。
 4. **Phase 之间的依赖要"前向引用"**——Phase 1 末尾应当说"如果你跳过 prompt 切换，Phase 4 / Phase 5 会出现什么具体症状"，不要等学员自己撞墙。
-5. **Commit 清单（§9.x）应当在每个 Phase 结束后回写**——Phase 4 / Phase 5 改了哪些文件，加进 Phase 6 的 `git add` 清单。否则清单天生滞后。
+5. **prompt 文件之间不能跨文件指代**——`sysPrompt` 是单一字符串，模型只能看到当前那一份；写"按 X 文件的工作流"等同于断链。需要复用就**内联**，DRY 在 prompt 写作里优先级远低于"打开一个文件就看到全部"。
+6. **Commit 清单（§9.x）应当在每个 Phase 结束后回写**——Phase 4 / Phase 5 改了哪些文件，加进 Phase 6 的 `git add` 清单。否则清单天生滞后。
 
 ---
 

@@ -98,7 +98,7 @@ public final class AgentFactory {
 
         return ReActAgent.builder()
                 .name("RequirementAnalyst")
-                .sysPrompt(Prompts.analystWithTools())
+                .sysPrompt(Prompts.analystMultiRound())
                 .model(ModelRegistry.resolve(DEFAULT_MODEL_ID))
                 .toolkit(toolkit)
                 .memory(memory)
