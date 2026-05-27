@@ -1,0 +1,95 @@
+{
+  "messages": [
+    {
+      "id": "u-mock-1",
+      "role": "user",
+      "text": "做一个简单的员工档案管理"
+    },
+    {
+      "id": "a-mock-1",
+      "role": "assistant",
+      "text": "好的，我帮你把需求拆成 3 个待办：\n\n1. 创建 App「员工档案管理」\n2. 在 App 下创建 Module「员工档案」\n3. 在 Module 下创建实体模型 employeeArchive（11 个字段）\n\n稍等，正在生成并校验 JSON Schema..."
+    },
+    {
+      "id": "u-mock-2",
+      "role": "user",
+      "text": "把入职日期改成必填，并增加部门字典模型"
+    },
+    {
+      "id": "a-mock-2",
+      "role": "assistant",
+      "text": "已记下，新增一个字典模型 departmentDict。注意：该模型在 Schema 校验时失败了（缺少 subs），我已经在 Todo Board 标红，点开右侧详情可查看原始 payload。"
+    }
+  ],
+  "todos": [
+    {
+      "id": "todo-2",
+      "type": "CREATE_APP",
+      "targetName": "员工档案管理",
+      "status": "SUCCESS",
+      "payload": {
+        "name": "employeeArchiveMgr",
+        "label": "员工档案管理",
+        "type": "23"
+      }
+    },
+    {
+      "id": "todo-1",
+      "type": "CREATE_MODULE",
+      "targetName": "员工档案",
+      "status": "RUNNING",
+      "payload": {
+        "name": "employeeArchive",
+        "label": "员工档案",
+        "appId": "employeeArchiveMgr",
+        "icon": "user",
+        "sort": 10
+      }
+    },
+    {
+      "id": "todo-3",
+      "type": "CREATE_MODEL",
+      "targetName": "employeeArchive",
+      "status": "PENDING",
+      "payload": {
+        "name": "employeeArchive",
+        "type": "ENTITY",
+        "pinyin": "yuangongdangan",
+        "tableName": "t_employee_archive",
+        "parentId": "",
+        "fields": [
+          { "comment": "主键", "name": "id", "dataType": "long", "usage": "primary", "relateModelType": null, "subs": null },
+          { "comment": "姓名", "name": "name", "dataType": "string", "usage": "", "relateModelType": null, "subs": null },
+          { "comment": "工号", "name": "employeeNo", "dataType": "string", "usage": "", "relateModelType": null, "subs": null },
+          { "comment": "性别", "name": "gender", "dataType": "string", "usage": "", "relateModelType": null, "subs": null },
+          { "comment": "出生日期", "name": "birthDate", "dataType": "date", "usage": "", "relateModelType": null, "subs": null },
+          { "comment": "入职日期", "name": "hireDate", "dataType": "date", "usage": "", "relateModelType": null, "subs": null },
+          { "comment": "部门", "name": "department", "dataType": "string", "usage": "", "relateModelType": null, "subs": null },
+          { "comment": "职位", "name": "position", "dataType": "string", "usage": "", "relateModelType": null, "subs": null },
+          { "comment": "联系电话", "name": "phone", "dataType": "string", "usage": "", "relateModelType": null, "subs": null },
+          { "comment": "电子邮箱", "name": "email", "dataType": "string", "usage": "", "relateModelType": null, "subs": null },
+          { "comment": "是否在职", "name": "isOnJob", "dataType": "boolean", "usage": "", "relateModelType": null, "subs": null }
+        ]
+      }
+    },
+    {
+      "id": "todo-4",
+      "type": "CREATE_MODEL",
+      "targetName": "departmentDict",
+      "status": "FAILED",
+      "errorMessage": "Schema 校验失败: /fields/2 dataType=enum 但未提供 subs 列表",
+      "payload": {
+        "name": "departmentDict",
+        "type": "DICT",
+        "tableName": "t_dept_dict",
+        "parentId": "",
+        "fields": [
+          { "comment": "字典码", "name": "code", "dataType": "string", "usage": "primary", "relateModelType": null, "subs": null },
+          { "comment": "字典名", "name": "label", "dataType": "string", "usage": "", "relateModelType": null, "subs": null },
+          { "comment": "上级部门", "name": "parent", "dataType": "enum", "usage": "", "relateModelType": null, "subs": null }
+        ]
+      }
+    }
+  ],
+  "pendingConfirm": null
+}

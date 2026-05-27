@@ -9,8 +9,9 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "vue": "^3.5.34",
-    "@ag-ui/client": "latest"
+    "@ag-ui/client": "latest",
+    "monaco-editor": "^0.55.1",
+    "vue": "^3.5.34"
   },
   "devDependencies": {
     "@types/node": "^24.12.3",
