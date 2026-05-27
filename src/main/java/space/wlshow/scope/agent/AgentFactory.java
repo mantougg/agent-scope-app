@@ -66,10 +66,10 @@ public final class AgentFactory {
     }
 
     /**
-     * 构造"需求解析"专用 Agent：
-     * - 强制 system prompt
-     * - 关闭 tool（Day 3 还不接 Toolkit）
-     * - 关闭 stream（Day 3 要拿完整 JSON 一次解析）
+     * 构造"需求解析"专用 Agent。
+     * RC2 起改走 Structured Output（{@code agent.call(msgs, AnalysisResult.class)}），
+     * 框架内部用 {@code generate_response} 工具 + schema 校验 + 不合规 reminder 自动 reasoning。
+     * {@code maxIters=5} 给框架几次重试余量；happy path 一次即返（StructuredOutputHook 成功后立刻 stopAgent）。
      */
     public static ReActAgent buildParser() {
         initModels();
@@ -77,7 +77,7 @@ public final class AgentFactory {
                 .name("RequirementAnalyst")
                 .sysPrompt(Prompts.analyst())
                 .model(ModelRegistry.resolve(DEFAULT_MODEL_ID))
-                .maxIters(2)             // 解析任务一次性回答，不需要多步推理
+                .maxIters(5)
                 .build();
     }
 
@@ -103,6 +103,7 @@ public final class AgentFactory {
                 .toolkit(toolkit)
                 .memory(memory)
                 .maxIters(15)        // 一个稍大点的需求可能调 1+5+5 ≈ 11 次工具
+                .enablePendingToolRecovery(false)  // HITL: 由我们自己管 pending tool 生命周期，框架不要补合成错误结果
                 .hooks(List.of(new PromptLengthHook()))   // Day 7 §6.4 LLM_CALL stage 靠它打点
                 .build();
     }

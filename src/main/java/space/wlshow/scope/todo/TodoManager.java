@@ -3,6 +3,9 @@ package space.wlshow.scope.todo;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.agentscope.core.session.Session;
+import io.agentscope.core.state.SessionKey;
+import io.agentscope.core.state.StateModule;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import space.wlshow.scope.observability.Stage;
@@ -12,10 +15,10 @@ import java.util.*;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * 待办列表 + 状态机 + 监听器 + StateModule（持久化在 Day 5 接通）。
+ * 待办列表 + 状态机 + 监听器 + {@link StateModule}（RC2 起即时落盘）。
  * 非线程安全：今天 Agent 同步调用没并发问题。Day 5 切到 Session/异步时再加锁。
  */
-public class TodoManager {
+public class TodoManager implements StateModule {
 
     private static final Logger log = LoggerFactory.getLogger(TodoManager.class);
 
@@ -115,5 +118,24 @@ public class TodoManager {
         if (listeners.stream().anyMatch(x -> x.getClass() == l.getClass())) return false;
         listeners.add(l);
         return true;
+    }
+
+    // --- StateModule（RC2 接通 JsonSession） ---
+
+    /** {@inheritDoc}
+     * 把 {@link #getState()} 包成 {@link TodoState} 写到 {@code <sessionDir>/todos.json}。
+     */
+    @Override
+    public void saveTo(Session session, SessionKey sessionKey) {
+        session.save(sessionKey, "todos", new TodoState(getState()));
+    }
+
+    /** {@inheritDoc}
+     * 从 {@code <sessionDir>/todos.json} 读出 {@link TodoState}，没有就什么也不做。
+     */
+    @Override
+    public void loadFrom(Session session, SessionKey sessionKey) {
+        session.get(sessionKey, "todos", TodoState.class)
+                .ifPresent(st -> loadState(st.snapshot()));
     }
 }

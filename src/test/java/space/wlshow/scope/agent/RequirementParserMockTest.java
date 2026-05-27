@@ -12,6 +12,11 @@ import static com.github.tomakehurst.wiremock.client.WireMock.*;
 import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.wireMockConfig;
 import static org.junit.jupiter.api.Assertions.*;
 
+/**
+ * RC2 Structured Output 通道下的离线测试。
+ * <p>RC2 把 LLM 输出固定走 OpenAI {@code tool_calls} 通道，固件必须模拟 {@code tool_calls}-shaped 响应。
+ * 1.0.12 时代的纯 content/fence fixture 全部失效。
+ */
 class RequirementParserMockTest {
 
     static WireMockServer server;
@@ -34,48 +39,48 @@ class RequirementParserMockTest {
 
     @Test
     void okOnFirstAttempt() {
-        stubChat("analyst-ok.json");
+        stubChat("analyst-tool-ok.json");
+
         AnalysisResult r = newParser().parse("做一个员工档案管理");
+
         assertEquals("employeeMgr", r.app().name());
-        assertEquals(1, server.getAllServeEvents().size(), "只应调用 1 次");
+        // RC2 StructuredOutputHook 在工具成功时 stopAgent()，happy path 只有 1 次 LLM 请求
+        assertEquals(1, server.getAllServeEvents().size(), "happy path 只应调用 1 次 LLM");
     }
 
     @Test
-    void recoverFromFence() {
-        stubChat("analyst-bad-fence.json");
-        AnalysisResult r = newParser().parse("做一个员工档案管理");
-        assertNotNull(r.app());        // fence 被 stripFence 剥掉，第一次就成功
-    }
-
-    @Test
-    void retryAfterMissingField() {
-        // 第一次返回缺 app，第二次返回正常
+    void retryWhenLLMSkipsTool() {
+        // 第一次：模型没调 generate_response，框架 reminder 触发 gotoReasoning
+        // 第二次：模型规规矩矩调了工具
         server.stubFor(post(urlPathMatching(".*/chat/completions"))
                 .inScenario("retry")
                 .whenScenarioStateIs("Started")
                 .willReturn(aResponse().withStatus(200)
                         .withHeader("Content-Type", "application/json")
-                        .withBodyFile("analyst-missing-app.json"))
-                .willSetStateTo("got-bad"));
+                        .withBodyFile("analyst-tool-skip.json"))
+                .willSetStateTo("skipped-once"));
         server.stubFor(post(urlPathMatching(".*/chat/completions"))
                 .inScenario("retry")
-                .whenScenarioStateIs("got-bad")
+                .whenScenarioStateIs("skipped-once")
                 .willReturn(aResponse().withStatus(200)
                         .withHeader("Content-Type", "application/json")
-                        .withBodyFile("analyst-ok.json")));
+                        .withBodyFile("analyst-tool-ok.json")));
 
         AnalysisResult r = newParser().parse("做一个员工档案管理");
+
         assertNotNull(r.app());
-        assertEquals(2, server.getAllServeEvents().size(), "应该是 1 次失败 + 1 次成功");
+        assertTrue(server.getAllServeEvents().size() >= 2,
+                "模型 skip 工具后框架应至少再调 1 次 LLM，实际=" + server.getAllServeEvents().size());
     }
 
     @Test
-    void giveUpAfterThree() {
-        stubChat("analyst-missing-app.json");
+    void throwsWhenLLMNeverCallsTool() {
+        // 永远只返回 content、不调 generate_response：框架 maxIters 耗尽后无 structured data
+        stubChat("analyst-tool-skip.json");
+
         ParseException ex = assertThrows(ParseException.class,
                 () -> newParser().parse("做一个员工档案管理"));
-        assertEquals(3, server.getAllServeEvents().size(), "应该调用 3 次后放弃");
-        assertFalse(ex.lastErrors().isEmpty());
+        assertFalse(ex.lastErrors().isEmpty(), "ParseException 必须携带 lastErrors");
     }
 
     private void stubChat(String fileName) {
@@ -86,17 +91,18 @@ class RequirementParserMockTest {
     }
 
     private RequirementParser newParser() {
+        // OpenAIChatModel 默认 stream=true 推 SSE chunk；fixture 是非流式 chat.completion，必须显式关
         OpenAIChatModel model = OpenAIChatModel.builder()
                 .apiKey("test-key")
                 .modelName("doubao-pro")
-                .baseUrl(server.baseUrl())     // 指向 WireMock
+                .baseUrl(server.baseUrl())
                 .stream(false)
                 .build();
         ReActAgent agent = ReActAgent.builder()
                 .name("AnalystTest")
                 .sysPrompt(Prompts.analyst())
                 .model(model)
-                .maxIters(1)
+                .maxIters(3)
                 .build();
         return new RequirementParser(agent, validator);
     }

@@ -1,0 +1,15 @@
+{
+  "id": "chatcmpl-tool-skip",
+  "object": "chat.completion",
+  "created": 1736000000,
+  "model": "doubao-pro",
+  "choices": [{
+    "index": 0,
+    "finish_reason": "stop",
+    "message": {
+      "role": "assistant",
+      "content": "好的，我先来分析一下您的需求……（模型未调用 generate_response 工具）"
+    }
+  }],
+  "usage": { "prompt_tokens": 100, "completion_tokens": 30, "total_tokens": 130 }
+}
