@@ -16,7 +16,10 @@ import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * 待办列表 + 状态机 + 监听器 + {@link StateModule}（RC2 起即时落盘）。
- * 非线程安全：今天 Agent 同步调用没并发问题。Day 5 切到 Session/异步时再加锁。
+ * <p>线程安全：{@code Toolkit(parallel=true)} 下多个 {@code create_*} 工具会并发调进来，
+ * 读写 {@link #items} 的方法统一用 {@code synchronized}（锁实例本身）串行化。
+ * {@code add()} 末尾触发的 {@code AutoSaveListener.persist() → getState()} 重入同一把锁，
+ * Java synchronized 可重入，安全；{@code AguiStateBridge.emit()} 锁的是自己，不会与本锁死锁。
  */
 public class TodoManager implements StateModule {
 
@@ -29,7 +32,7 @@ public class TodoManager implements StateModule {
     public void addListener(TodoChangeListener l) { listeners.add(l); }
 
     /** 新增 PENDING 待办，返回生成的 id（"todo-1"、"todo-2"...）。 */
-    public TodoItem add(TodoType type, String targetName, JsonNode payload) {
+    public synchronized TodoItem add(TodoType type, String targetName, JsonNode payload) {
         String id = "todo-" + seq.incrementAndGet();
         TodoItem it = TodoItem.newPending(id, type, targetName, payload);
         items.put(id, it);
@@ -39,11 +42,11 @@ public class TodoManager implements StateModule {
         return it;
     }
 
-    public Optional<TodoItem> next() {
+    public synchronized Optional<TodoItem> next() {
         return items.values().stream().filter(it -> it.status() == TodoStatus.PENDING).findFirst();
     }
 
-    public TodoItem get(String id) {
+    public synchronized TodoItem get(String id) {
         TodoItem it = items.get(id);
         if (it == null) throw new NoSuchElementException("没有此待办: " + id);
         return it;
@@ -53,7 +56,7 @@ public class TodoManager implements StateModule {
     public void markSuccess(String id) { transit(id, TodoStatus.SUCCESS, null); }
     public void markFailed(String id, String err) { transit(id, TodoStatus.FAILED, err); }
 
-    private void transit(String id, TodoStatus to, String err) {
+    private synchronized void transit(String id, TodoStatus to, String err) {
         TodoItem cur = get(id);
         if (cur.status().isTerminal()) {
             throw new IllegalStateException("终态不可迁移: " + id + " " + cur.status() + " -> " + to);
@@ -73,11 +76,11 @@ public class TodoManager implements StateModule {
         listeners.forEach(l -> l.onStatusChange(id, from, to, err));
     }
 
-    public List<TodoItem> snapshot() { return List.copyOf(items.values()); }
+    public synchronized List<TodoItem> snapshot() { return List.copyOf(items.values()); }
 
-    public int size() { return items.size(); }
+    public synchronized int size() { return items.size(); }
 
-    public void clear() {
+    public synchronized void clear() {
         items.clear();
         seq.set(0);
         Stage.run(Stage.TODO_UPDATE, () -> log.info("[Todo] CLEAR"));
@@ -86,7 +89,7 @@ public class TodoManager implements StateModule {
 
     // --- StateModule（Day 5 接通） ---
 
-    public JsonNode getState() {
+    public synchronized JsonNode getState() {
         ObjectNode root = Json.mapper().createObjectNode();
         ArrayNode arr = root.putArray("items");
         items.values().forEach(it -> arr.add(Json.mapper().valueToTree(it)));
@@ -94,7 +97,7 @@ public class TodoManager implements StateModule {
         return root;
     }
 
-    public void loadState(JsonNode state) {
+    public synchronized void loadState(JsonNode state) {
         items.clear();
         seq.set(state.path("seq").asLong(0));
         for (JsonNode n : state.path("items")) {
@@ -104,7 +107,7 @@ public class TodoManager implements StateModule {
         log.info("[Todo] LOADED size={} seq={}", items.size(), seq.get());
     }
 
-    public void replacePayload(String id, JsonNode newPayload) {
+    public synchronized void replacePayload(String id, JsonNode newPayload) {
         TodoItem cur = get(id);
         if (cur.status() != TodoStatus.PENDING) {
             throw new IllegalStateException("非 PENDING 不可改 payload: " + id);
