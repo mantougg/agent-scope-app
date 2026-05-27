@@ -1,0 +1,32 @@
+<configuration scan="true" scanPeriod="30 seconds">
+
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <!-- 控制台用短 traceId 易读，日志文件用全长（见 §7.4） -->
+            <pattern>%d{HH:mm:ss.SSS} [%X{traceIdShort:-NA}] %-5level %logger{36} - %msg%n</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+    </appender>
+
+    <appender name="JSON" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>logs/scope.json.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <fileNamePattern>logs/scope.json-%d{yyyy-MM-dd}.log</fileNamePattern>
+            <maxHistory>14</maxHistory>
+        </rollingPolicy>
+        <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+            <includeMdcKeyName>traceId</includeMdcKeyName>
+            <includeMdcKeyName>threadId</includeMdcKeyName>
+            <includeMdcKeyName>runId</includeMdcKeyName>
+            <includeMdcKeyName>stage</includeMdcKeyName>
+        </encoder>
+    </appender>
+
+    <logger name="space.wlshow.scope" level="DEBUG" />
+    <logger name="io.agentscope" level="INFO" />
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE" />
+        <appender-ref ref="JSON" />
+    </root>
+</configuration>

@@ -4,13 +4,12 @@
 
 ## 1. 项目一句话定位
 
-基于 **AgentScope-Java 1.0.12** 的需求分析智能体学习项目。当前处于 **Day 6 已落地** 状态（详见 [docs/learning.md](docs/learning.md)）：Day 1-5 全部就位 + Day 6 把对外入口从 CLI 切到 **Spring Boot WebFlux**（`ScopeApp` 成为 `@SpringBootApplication`，Day 5 的 CLI REPL 保留在 `ScopeReplApp` 备份入口）+ `agentscope-agui-spring-boot-starter` 暴露 `POST /agui/run` SSE + `AguiAgentConfig` 通过覆盖 `ThreadSessionManager` 子类按 threadId 复用 `FileSession` + `CorsWebFilter` 放开 5173 跨域 + `frontend/` Vite + Vue3 + `@ag-ui/client` 打字机渲染。Day 7 课程文档已写完，代码尚未落地。
+基于 **AgentScope-Java 1.0.12** 的需求分析智能体学习项目。当前处于 **Day 6 + Day 7 §4 §5 已落地**（详见 [docs/learning.md](docs/learning.md)）：Day 1-5 全部就位 + Day 6 把对外入口从 CLI 切到 **Spring Boot WebFlux**（`ScopeApp` 成为 `@SpringBootApplication`，Day 5 的 CLI REPL 保留在 `ScopeReplApp` 备份入口）+ Day 7 §4 旁路 SSE 端点 `/agui/state-stream/{threadId}` + `AguiStateBridge` 把 TodoManager 变更映射成 STATE_SNAPSHOT/STATE_DELTA + Day 7 §5 HITL 续跑（前端 push `role:'tool'` 回填）+ **自家 `/agui/run` 路由 + `ThreadAgentResolver` 取代 starter 默认 `DefaultAgentResolver`**（绕开 `extractLatestUserMessage` 吃掉 tool 消息的坑，见第 5 节）+ `CorsWebFilter` 放开 5173 跨域 + `frontend/` Vite + Vue3 + `@ag-ui/client` 打字机渲染。Day 7 §6 起（OTel/Micrometer/Jaeger/HttpDispatcher）尚未落地。
 
-**不要**在没有用户明确要求时把项目"补全"到 Day 7 的形态——每一天的代码都对应当天的学习目标，提前堆砌会破坏教学节奏。具体表现为：
+**Day 7 剩余部分（§6 之后）尚未落地**——OpenTelemetry / Micrometer / Jaeger / HttpDispatcher 真发 HTTP / Harness 升级都没动。
 
-- 不要在 Day 6 代码里提前接 `AguiStateBridge` / `STATE_DELTA` / AG-UI HITL（那是 Day 7）
-- 不要提前引入 OpenTelemetry / Micrometer / Jaeger（那是 Day 7）
-- Day 6 阶段 `SubmitTool` 的 `ToolSuspendException` 在 AG-UI 通道下**没有**前端回填路径，是 Day 7 §5 才补完的——目前调它会让一次 run 看起来"卡住没反应"，这是预期内
+- 不要提前引入 OpenTelemetry / Micrometer / Jaeger（Day 7 §6-§7）
+- 不要把 `SubmitTool` 的 dry-run 改成真发 HTTP（Day 7 §9 才接 `HttpDispatcher`）
 
 ## 2. 技术栈与版本
 
@@ -139,24 +138,28 @@ mvn -U dependency:resolve
 | `tool.SubmitTool` | `@Tool submit_to_frontend(confirmed)`：confirmed=false 抛 `ToolSuspendException` 触发 HITL；CLI 走 `ScopeReplApp.handleSuspend()` 回填，**Day 6 AG-UI 通道暂无回填路径，Day 7 §5 补完** |
 | `ScopeReplApp` | Day 5 落地的 CLI REPL（`/parse` `/run` `/submit` `/todos` 四个子命令 + ToolSuspend 回填）；Day 6 切 Spring Boot 后**保留为备份入口**，用 `-Dexec.mainClass=space.wlshow.scope.ScopeReplApp` 触发 |
 
-### Day 6（AG-UI 协议集成 - 基础）
+### Day 6 + Day 7 §4 §5（AG-UI 协议集成 + STATE_DELTA 旁路 + HITL）
 
 | 类 / 资源 | 职责 |
 |---|---|
 | `ScopeApp` | 改造成 `@SpringBootApplication` 引导类，`mvn spring-boot:run` 起 Netty WebFlux 暴露 `POST /agui/run` |
-| `config.AguiAgentConfig` | 覆盖 starter 自动配置的 `ThreadSessionManager` Bean（`@ConditionalOnMissingBean`）：子类 `getOrCreateAgent` 把默认 `Supplier<Agent>` 换成闭包 threadId 的 Supplier，按 threadId 从 `FileSession.loadOrNew(threadId)` 复用待办/记忆；`@PostConstruct` 跑一次 `AgentFactory.initModels()` 避免 `[primary] 被覆盖` 刷屏；`@PreDestroy` 把 `activeSessions` 全量落盘；同文件还有 `CorsWebFilter` 显式列 GET/POST/OPTIONS 放开 5173 |
-| `resources/application.yml` | Spring Boot + starter 配置：`agentscope.agui.path-prefix=/agui` / `default-agent-id=analyst` / `server-side-memory=true`（必须开，否则 `DefaultAgentResolver` 不走 sessionManager 分支） |
+| `config.AguiAgentConfig` | **自家 `/agui/run` 路由** + 内部 `ThreadAgentResolver`。**绕开 starter 的 `DefaultAgentResolver` 与 `ThreadSessionManager`**（Day 6 试过那条路，Day 7 §5 HITL 阶段发现走不通：`AguiRequestProcessor.extractLatestUserMessage` 只挑 `role="user"`，前端推的 `role:'tool'` 回填被静默吃掉）。RouterFunction 用 `@Order(Ordered.HIGHEST_PRECEDENCE)` 压过 starter 自动装配的同 path 路由；`ThreadAgentResolver.hasMemory()` 恒 false 跳过 `extractLatestUserMessage`；`resolveAgent` 每次新建 Agent + 全新 `InMemoryMemory`（让 memory 由前端 `messages` 重建，零累计）、但**复用 per-threadId `FileSession.todos`**（TodoManager 跨请求活）；`@PostConstruct` 跑一次 `AgentFactory.initModels()`；`@PreDestroy` 落盘所有 session；`CorsWebFilter` 显式列 GET/POST/OPTIONS 放开 5173 |
+| `agui.AguiStateBridge` | 实现 `TodoChangeListener`：`onCreate` → `STATE_DELTA(add /todos/-)`；`onStatusChange` → `STATE_DELTA(replace /todos/id=X/status)`；`onClear` → `STATE_DELTA(replace /todos [])`；`snapshotNow()` 在订阅者连上 SSE 时发整份 `STATE_SNAPSHOT`。**`emit()` 必须 synchronized**：`Toolkit(parallel=true)` 下多个 `create_*` 并发调进 `Sinks.many().multicast()` 会触发 `FAIL_NON_SERIALIZED`，原先的 `emitNext(handler=false)` 重试还会抛 `Sinks.EmissionException` 把工具调用炸成 `Tool execution failed`（详见 [[reactor-sink-parallel-quirk]]） |
+| `agui.StateStreamController` | `GET /agui/state-stream/{threadId}` 旁路 SSE 端点；per-threadId 一把 `Sinks.Many<AguiEvent>`；订阅者 `doOnSubscribe` 时调 `bridge.snapshotNow()` 发全量；`AguiAgentConfig.touchThread` 在订阅时确保 session + bridge 已挂 |
+| `resources/application.yml` | `agentscope.agui.path-prefix=/agui` / `default-agent-id=analyst`；`server-side-memory` 字段对**自家路由无效**（我们的 resolver 自己决定 `hasMemory=false`），但 starter 默认路由仍会读它——保持当前值不影响功能 |
 | `pom.xml` | 加 `spring-boot-starter-webflux` + `agentscope-agui-spring-boot-starter:${agentscope.version}` + `spring-boot-maven-plugin`；`jackson-bom 2.17.0` import **必须前置**于 `spring-boot-dependencies` |
-| `frontend/` | 独立 npm 工程：Vite + Vue3 + `@ag-ui/client`；`src/App.vue` 用 `HttpAgent.subscribe({ onTextMessageStartEvent / onTextMessageContentEvent / onTextMessageEndEvent / onToolCallStartEvent / onToolCallEndEvent / onRunFinishedEvent / onRunErrorEvent })` 渲染打字机回复 |
+| `frontend/` | 独立 npm 工程：Vite + Vue3 + `@ag-ui/client`；`src/App.vue` 用 `HttpAgent.subscribe({...})` 渲染打字机回复 + `EventSource('/agui/state-stream/{threadId}')` 订阅看板事件（`applyOps` 解析非标 JSON Patch path `/todos/id=<id>/<field>`）+ HITL 弹窗：`onToolCallStartEvent` 记下 `submit_to_frontend` 的 `toolCallId`，`onToolCallResultEvent` 收到 result 就清掉（说明工具走完了），`onRunFinishedEvent` 看若仍有 id 没清说明挂起 → 弹窗；`resumeRun` 直接 `agent.messages.push({role:'tool', toolCallId, content: 'USER_CONFIRMED'\|'USER_REJECTED'} as any)`，不用 `agent.addMessage`（后者拒收 role:'tool'） |
 | `scripts/agui-tail.sh` | curl + jq 把 SSE 帧按 `type \t (delta\|toolCallName\|...)` 打成一行一个事件，肉眼数 17 类型齐不齐 |
 | `fixtures/demo-input.json` | 最小 `RunAgentInput` 样例，供 `scripts/agui-tail.sh` 与 `curl` 直接喂入 |
 | `docs/screenshots/` | 截图 / GIF 录屏目录（Day 6 起），含 `day6-curl-trace.png` / `day6-end-to-end.gif`（学员录） |
 
-> ⚠️ Day 6 与文档的偏离点（实现是对的，文档之后会同步）：
-> - **不是** `AguiAgentRegistryCustomizer` —— starter 1.0.12 的 `registerFactory(String, Supplier<Agent>)` 无参 Supplier 拿不到 threadId，所以走"覆盖 ThreadSessionManager 子类"路线
+> ⚠️ 与课程文档（lessons/Day06、Day07）的偏离点：
+> - **`AguiAgentConfig` 不再覆盖 `ThreadSessionManager`**：Day 6 教案曾这么写，Day 7 §5 HITL 落地后改成自家 RouterFunction + `ThreadAgentResolver`。原因详见 [[agentscope-1012-hitl-quirk]]
+> - **`AguiAgentRegistryCustomizer` 路也不行**：starter 1.0.12 的 `registerFactory(String, Supplier<Agent>)` 无参 Supplier 拿不到 threadId
 > - **不是** `agentscope.agui.base-path / default-agent` —— `AguiProperties` 实际字段是 `pathPrefix / defaultAgentId`
-> - **不是** `FileSession.loadOrNew` 内置缓存 —— 实际是 `AguiAgentConfig.activeSessions` `ConcurrentHashMap` 外部兜底
+> - **`FileSession.loadOrNew` 没有内置缓存**：靠 `AguiAgentConfig.activeSessions` `ConcurrentHashMap` 兜底
 > - 前端 `@ag-ui/client` 当前版本回调入参形态是 `({event}) => event.xxx`，工具名字段是 `event.toolCallName`（不是 `toolName`）
+> - Day 7 §5.4 教案写 `agent.messages.push({role:'tool', ...})` 但保持 `server-side-memory=true`——**实测不通**，被 starter 静默吞。lesson §12 故障表的 fallback "改 server-side-memory=false" 也不通（`DefaultAgentResolver` 标准模式拿不到 threadId）。最终走第三条路：自家路由
 
 ## 6. 测试约定
 
@@ -247,7 +250,7 @@ Day[两位数序号]_[文章标题].md
 | Day 4 | `Day04_TodoManager + 业务工具集.md` | ✅ 代码 + 文档 |
 | Day 5 | `Day05_多轮对话 + Memory 与 Session + HITL.md` | ✅ 代码 + 文档 |
 | Day 6 | `Day06_AG-UI 协议集成（基础）.md` | ✅ 代码 + 文档 |
-| Day 7 | `Day07_AG-UI 协议进阶 + 收尾验收.md` | 📘 仅文档 |
+| Day 7 | `Day07_AG-UI 协议进阶 + 收尾验收.md` | 📘 文档 + 部分代码（§4 §5 已落地，§6 起未落地） |
 
 新建课程文档时同步在 `docs/learning.md` 路线图、`README.md` 文档导航、本文件第 9 节表格里加引用。Markdown 链接因含空格，建议用 `[文本](<带空格的路径.md>)` 角括号形式或将空格转义为 `%20`。
 
@@ -293,7 +296,8 @@ claude mcp add agentscope-docs -- uvx --from mcpdoc mcpdoc \
 | 浏览器 5173 调 `/agui/run` CORS 报错 | `AguiAgentConfig.corsWebFilter()` 没被扫到，或 `application.yml` 里又写了一份 `agentscope.agui.cors.*` 让响应头出现两份 `Access-Control-Allow-Origin`；二选一 |
 | 起得来但 `/agui/run` 一直 404 | `application.yml` 漏了 `agentscope.agui.path-prefix=/agui` 或写成 `base-path`；正确 key 是 `pathPrefix`（参看 `AguiProperties`） |
 | Day 6 起浏览器对话后 `data/sessions/` 空 | `AguiAgentConfig.@PreDestroy saveAllOnShutdown` 仅在优雅关停时触发，Ctrl+C / 异常退出可能跑不到；现象正常，Day 7 接 `AguiStateBridge` 时顺手把 `session.save()` 挂到 listener 上即时落盘 |
-| 浏览器发送后一直转圈、后端日志停在 `[Submit] suspend` | LLM 触发了 `submit_to_frontend(confirmed=false)` → `ToolSuspendException`，Day 6 AG-UI 通道**没有**前端回填路径；Day 7 §5 才补完。临时绕开：在 `AgentFactory.buildAnalystWithTools` 里**先摘掉** `toolkit.registerTool(new SubmitTool(todos))` |
+| 浏览器点确认下发后 todo 不变 / 后端无新 `[Submit] dispatched` | starter 1.0.12 的 `AguiRequestProcessor.extractLatestUserMessage` 在 `server-side-memory=true` 下只挑 `role="user"`，前端推的 `role:'tool'` 回填被静默吃掉；改 `server-side-memory=false` 后 `DefaultAgentResolver` 又拿不到 threadId。**唯一解**：自家 RouterFunction + 自定义 `AgentResolver.hasMemory()=false`（已落地，见 `AguiAgentConfig.scopeAguiRunRoutes`）。检查：`mvn spring-boot:run` 启动日志应有 `[AguiConfig] mounting custom AGUI run route at /agui/run` + 续跑应有 `[AguiConfig] build agent for thread=... todos=3` 第二次出现 |
+| 看板少 todo / 工具偶发 `Error: Tool execution failed: Spec. Rule` | `Toolkit(parallel=true)` 让 `create_*` 并发调 `Sinks.many().multicast().tryEmitNext`，返回 `FAIL_NON_SERIALIZED`；老版 `emit()` 的 `emitNext(handler=false)` retry 会抛 `Sinks.EmissionException` 把工具炸成 framework error。**已修**：`AguiStateBridge.emit()` 加 `synchronized` + 失败只 warn 不抛 |
 | 浏览器 Agent 回复一整段砸下来不流式 | 模型 `stream` 没开；检查 `application.conf` / `ModelRegistry` 里 `OpenAIChatModel.builder().stream(true)`；火山方舟必须开 stream 才推 tool_call 增量 |
 
 ## 11. Git 提交风格

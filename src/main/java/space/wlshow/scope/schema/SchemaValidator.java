@@ -8,6 +8,7 @@ import com.networknt.schema.Error;
 import com.networknt.schema.InputFormat;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import space.wlshow.scope.observability.Stage;
 import space.wlshow.scope.util.Json;
 
 import java.io.InputStream;
@@ -57,14 +58,21 @@ public final class SchemaValidator {
     }
 
     public List<ValidationError> validate(JsonNode node) {
-        String json = Json.write(node);
-        List<Error> raw = schema.validate(json, InputFormat.JSON);
-        if (raw.isEmpty()) return List.of();
-        List<ValidationError> errors = raw.stream()
-                .map(ValidationError::from)
-                .collect(Collectors.toList());
-        log.debug("[Schema] {} 校验失败 {} 项：{}", resourcePath, errors.size(), errors);
-        return errors;
+        return Stage.call(Stage.SCHEMA_VALIDATE, () -> {
+            String json = Json.write(node);
+            List<Error> raw = schema.validate(json, InputFormat.JSON);
+            String schemaName = resourcePath.replaceAll("^.*/|\\.schema\\.json$", "");
+            if (raw.isEmpty()) {
+                log.info("[Schema] schema={} result=pass errors=0", schemaName);
+                return List.<ValidationError>of();
+            }
+            List<ValidationError> errors = raw.stream()
+                    .map(ValidationError::from)
+                    .collect(Collectors.toList());
+            log.info("[Schema] schema={} result=fail errors={}", schemaName, errors.size());
+            log.debug("[Schema] {} 详情：{}", resourcePath, errors);
+            return errors;
+        });
     }
 
     public List<ValidationError> validate(String json) {

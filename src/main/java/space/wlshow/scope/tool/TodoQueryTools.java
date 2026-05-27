@@ -3,6 +3,7 @@ package space.wlshow.scope.tool;
 import io.agentscope.core.tool.Tool;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import space.wlshow.scope.observability.Stage;
 import space.wlshow.scope.todo.TodoItem;
 import space.wlshow.scope.todo.TodoManager;
 
@@ -20,12 +21,15 @@ public class TodoQueryTools {
             description = "列出当前所有待办（含 id / type / 名称 / 状态 / payload）。" +
                     "多轮对话第二轮起，新用户输入到来时必须先调一次。")
     public String listTodos() {
-        int size = todos.size();
-        log.info("[Tool] list_todos size={}", size);
-        if (size == 0) return "当前无待办";
-        return todos.snapshot().stream()
-                .map(this::format)
-                .collect(Collectors.joining("\n"));
+        return Stage.call(Stage.TOOL_CALL, () -> {
+            int size = todos.size();
+            log.info("[Tool] 调用工具 name=list_todos argsHash={} size={}",
+                    Stage.argsHash("list_todos"), size);
+            if (size == 0) return "当前无待办";
+            return todos.snapshot().stream()
+                    .map(this::format)
+                    .collect(Collectors.joining("\n"));
+        });
     }
 
     private String format(TodoItem it) {

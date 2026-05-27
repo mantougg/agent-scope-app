@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import space.wlshow.scope.observability.Stage;
 import space.wlshow.scope.util.Json;
 
 import java.util.*;
@@ -29,7 +30,8 @@ public class TodoManager {
         String id = "todo-" + seq.incrementAndGet();
         TodoItem it = TodoItem.newPending(id, type, targetName, payload);
         items.put(id, it);
-        log.info("[Todo] CREATE id={} type={} target={}", id, type, targetName);
+        Stage.run(Stage.TODO_UPDATE, () ->
+                log.info("[Todo] CREATE id={} type={} target={}", id, type, targetName));
         listeners.forEach(l -> l.onCreate(it));
         return it;
     }
@@ -61,8 +63,11 @@ public class TodoManager {
         }
         TodoItem next = cur.withStatus(to, err);
         items.put(id, next);
-        log.info("[Todo] {} {} -> {} {}", id, cur.status(), to, err == null ? "" : "err=" + err);
-        listeners.forEach(l -> l.onStatusChange(id, cur.status(), to, err));
+        TodoStatus from = cur.status();
+        Stage.run(Stage.TODO_UPDATE, () ->
+                log.info("[Todo] {} {} -> {} {}",
+                        id, from, to, err == null ? "" : "err=" + err));
+        listeners.forEach(l -> l.onStatusChange(id, from, to, err));
     }
 
     public List<TodoItem> snapshot() { return List.copyOf(items.values()); }
@@ -72,7 +77,7 @@ public class TodoManager {
     public void clear() {
         items.clear();
         seq.set(0);
-        log.info("[Todo] CLEAR");
+        Stage.run(Stage.TODO_UPDATE, () -> log.info("[Todo] CLEAR"));
         listeners.forEach(TodoChangeListener::onClear);
     }
 
@@ -104,5 +109,11 @@ public class TodoManager {
         TodoItem next = cur.withPayload(newPayload);
         items.put(id, next);
         log.info("[Todo] PAYLOAD-REPLACE id={}", id);
+    }
+
+    public synchronized boolean addListenerIfAbsent(TodoChangeListener l) {
+        if (listeners.stream().anyMatch(x -> x.getClass() == l.getClass())) return false;
+        listeners.add(l);
+        return true;
     }
 }

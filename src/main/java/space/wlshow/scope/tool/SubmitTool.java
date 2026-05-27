@@ -5,6 +5,7 @@ import io.agentscope.core.tool.ToolParam;
 import io.agentscope.core.tool.ToolSuspendException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import space.wlshow.scope.observability.Stage;
 import space.wlshow.scope.todo.TodoItem;
 import space.wlshow.scope.todo.TodoManager;
 import space.wlshow.scope.todo.TodoStatus;
@@ -27,31 +28,61 @@ public class SubmitTool {
                     "用户确认后系统会自动让你恢复，再以 confirmed=true 调一次完成真正下发。")
     public String submit(@ToolParam(name = "confirmed",
             description = "用户是否已确认。第一次必填 false。") boolean confirmed) {
-        List<TodoItem> pending = todos.snapshot().stream()
-                .filter(it -> it.status() == TodoStatus.PENDING).toList();
+        return Stage.call(Stage.TOOL_CALL, () -> {
+            log.info("[Tool] 调用工具 name=submit_to_frontend argsHash={}",
+                    Stage.argsHash(confirmed));
+            List<TodoItem> pending = todos.snapshot().stream()
+                    .filter(it -> it.status() == TodoStatus.PENDING).toList();
 
-        if (pending.isEmpty()) return "没有 PENDING 待办，无需下发";
+            if (pending.isEmpty()) return "没有 PENDING 待办，无需下发";
 
-        if (!confirmed) {
-            String summary = pending.stream()
-                    .map(it -> String.format("- %s [%s] %s", it.id(), it.type(), it.targetName()))
-                    .reduce((a, b) -> a + "\n" + b).orElse("");
-            log.info("[Submit] suspend with {} items", pending.size());
-            throw new ToolSuspendException("AWAITING_USER_CONFIRMATION\n" + summary);
-        }
+            if (!confirmed) {
+                String summary = pending.stream()
+                        .map(it -> String.format("- %s [%s] %s",
+                                it.id(), it.type(), it.targetName()))
+                        .reduce((a, b) -> a + "\n" + b).orElse("");
+                log.info("[Submit] suspend with {} items", pending.size());
+                throw new ToolSuspendException("AWAITING_USER_CONFIRMATION\n" + summary);
+            }
 
-        // confirmed=true：真发（Day 5 dry-run，只是把状态机走一遍）
-        // Day 4 设计意图：RUNNING 表示"工具下发中"。Day 6 接前端后，markRunning 和
-        // markSuccess 之间会插入实际 SSE 下发 + 等待前端 ACK 的逻辑；
-        // 本日 dry-run 直接顺一遍只为把状态机跑通。
-        int n = 0;
-        for (TodoItem it : pending) {
-            todos.markRunning(it.id());
-            // TODO Day 6：换成 bridge.dispatch(it).block() 后再 markSuccess
-            todos.markSuccess(it.id());
-            n++;
-        }
-        log.info("[Submit] dispatched {} items (dry-run)", n);
-        return "已下发 " + n + " 项（dry-run，Day 6 接前端）";
+            // confirmed=true：真发（Day 5 dry-run，只是把状态机走一遍）
+            // Day 7 §9 接 HttpDispatcher 后，markRunning 和 markSuccess 之间会插入
+            // 实际 HTTP 下发 + 等待 ACK 的逻辑；本日 dry-run 直接顺一遍。
+            int n = 0;
+            for (TodoItem it : pending) {
+                todos.markRunning(it.id());
+                long start = System.currentTimeMillis();
+                int payloadSize = it.payload().toString().length();
+                Stage.run(Stage.FRONTEND_DISPATCH, () ->
+                        log.info("[Dispatch] id={} endpoint={} size={}",
+                                it.id(), endpointOf(it), payloadSize));
+                try {
+                    // TODO Day 7 §9：换成 dispatcher.dispatch(it).block()
+                    todos.markSuccess(it.id());
+                    long ms = System.currentTimeMillis() - start;
+                    Stage.run(Stage.FRONTEND_CALLBACK, () ->
+                            log.info("[Dispatch] 回执 id={} status=SUCCESS latency={}ms",
+                                    it.id(), ms));
+                } catch (Exception e) {
+                    todos.markFailed(it.id(), e.getMessage());
+                    long ms = System.currentTimeMillis() - start;
+                    Stage.run(Stage.FRONTEND_CALLBACK, () ->
+                            log.warn("[Dispatch] 回执 id={} status=FAILED latency={}ms err={}",
+                                    it.id(), ms, e.getMessage()));
+                }
+                n++;
+            }
+            log.info("[Submit] dispatched {} items (dry-run)", n);
+            return "已下发 " + n + " 项（dry-run，Day 7 §9 接 HttpDispatcher）";
+        });
+    }
+
+    /** dry-run 期间假装的下游端点名；接上 HttpDispatcher 后换成真实 URL。 */
+    private static String endpointOf(TodoItem it) {
+        return switch (it.type()) {
+            case CREATE_APP -> "POST /api/app";
+            case CREATE_MODULE -> "POST /api/module";
+            case CREATE_MODEL -> "POST /api/model";
+        };
     }
 }

@@ -103,6 +103,7 @@ public final class AgentFactory {
                 .toolkit(toolkit)
                 .memory(memory)
                 .maxIters(15)        // 一个稍大点的需求可能调 1+5+5 ≈ 11 次工具
+                .hooks(List.of(new PromptLengthHook()))   // Day 7 §6.4 LLM_CALL stage 靠它打点
                 .build();
     }
 

@@ -1,5 +1,5 @@
 server:
-  port: 8080
+  port: 8888
 
 # AG-UI starter 配置（key 来自 io.agentscope.spring.boot.agui.common.AguiProperties，
 # 前缀 agentscope.agui，对应字段：pathPrefix / defaultAgentId / serverSideMemory ...）

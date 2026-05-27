@@ -664,9 +664,64 @@ async function resumeRun(decision: 'USER_CONFIRMED' | 'USER_REJECTED') {
 
 > 📌 **为什么不用 `agent.addMessage`**：`@ag-ui/client` 1.x 的 `addMessage` 内部 schema 校验对 `role: 'tool'` 时常拒收（不同小版本行为不一）。直接 push 到 `agent.messages` 数组是协议层兼容的最稳路径——`HttpAgent.runAgent` 在发起请求时会序列化整个 messages 列表，AG-UI 协议本身允许 `{role:"tool", toolCallId, content}` 形态。如果 TS 类型卡了，加 `as any` 跳过编译期检查。
 >
-> 📌 **服务端续跑机制**：starter 的 `server-side-memory=true` 模式下，`AguiRequestProcessor.extractLatestUserMessage()` 只取最后一条 user message 喂给 agent——但 tool result 不是 user，需要看 starter 是不是把"最后一组连续的 tool result + user"都续上去。如果实际跑下来发现续跑没生效（agent 没看到 tool result），临时把 `server-side-memory` 改 false，前端送完整 messages 数组，agent 用 stateless 模式跑 —— 这条 fallback 写进故障表 §12。
+> ⚠️ **服务端续跑实测结论（与原讲义不同）**：starter 1.0.12 的 `AguiRequestProcessor.extractLatestUserMessage()` **明确**只挑 `role="user"`（参看 `AguiRequestProcessor.java:170-183`，`if ("user".equalsIgnoreCase(msg.getRole()))`），前端推的 `role:'tool'` 在 `server-side-memory=true` 下会被**静默吃掉**——agent 拿到老 user message 触发 `IllegalStateException("Pending tool calls exist without results")`，被 `AguiAgentAdapter.onErrorResume` 兜底成空响应，前端 `newMessages=[]` 一脸蒙。
+>
+> 备选 fallback "改 `server-side-memory=false`" **也不通**：`DefaultAgentResolver` 在标准模式只调 `registry.getAgent(agentId)`——**拿不到 threadId**，无法按线程分发 `TodoManager`，全局共享一个 Agent 实例。
+>
+> **唯一可行解**：自家 `/agui/run` 路由 + 自定义 `AgentResolver`（具体实现见 §5.5）。`AgentResolver` 接口本身是 `(agentId, threadId) -> Agent`，所以走这条路两边的能力都拿得到。
 
-### 5.5 服务端验证
+### 5.5 自家 `/agui/run` 路由 + `ThreadAgentResolver`（替代 §5.4 footnote 里失败的两条路）
+
+把 `AguiAgentConfig` 整个改造：去掉原来覆盖 `ThreadSessionManager` 的 Bean，挂一条 `@Order(Ordered.HIGHEST_PRECEDENCE)` 的 RouterFunction 顶替 starter 自动装配的 `aguiRoutes`：
+
+```java
+@Bean
+@Order(Ordered.HIGHEST_PRECEDENCE)
+public RouterFunction<ServerResponse> scopeAguiRunRoutes(AguiProperties props) {
+    AguiAdapterConfig adapterConfig = AguiAdapterConfig.builder()
+            .defaultAgentId(props.getDefaultAgentId())
+            // 其余 props 透传
+            .build();
+    AguiRequestProcessor processor = AguiRequestProcessor.builder()
+            .agentResolver(new ThreadAgentResolver())   // ★ 自家 resolver
+            .config(adapterConfig)
+            .build();
+    AguiEventEncoder encoder = new AguiEventEncoder();
+    String runPath = props.getPathPrefix() + "/run";
+    return RouterFunctions.route()
+            .POST(runPath, req -> req.bodyToMono(RunAgentInput.class)
+                    .flatMap(input -> handleRun(input, processor, encoder)))
+            .build();
+}
+
+private class ThreadAgentResolver implements AgentResolver {
+    @Override
+    public Agent resolveAgent(String agentId, String threadId) {
+        FileSession session = activeSessions.computeIfAbsent(threadId, FileSession::loadOrNew);
+        // 兜底挂 bridge（前端订阅 state-stream 时已挂过，这里防御性兜底）
+        ensureBridgeAttached(threadId, session);
+        // ★ 每次新建 Agent + 全新 Memory：让 agent.memory 由前端 messages 重建，
+        //   既不跨请求累计，也保证 HITL 的 role:'tool' 完整到 doCall
+        return AgentFactory.buildAnalystWithTools(session.todos, new InMemoryMemory());
+    }
+
+    @Override
+    public boolean hasMemory(String threadId) {
+        return false;   // ★ 跳过 extractLatestUserMessage，前端完整 messages 直传
+    }
+}
+```
+
+两个关键设计点：
+
+1. **`@Order(Ordered.HIGHEST_PRECEDENCE)`**：starter 自动装配的 `aguiRoutes` Bean 同样注册 `POST /agui/run`。Spring WebFlux 的 `RouterFunctionMapping` 通过 `orderedStream().reduce(RouterFunction::andOther)` 串路由表，靠前的优先级高、first-match 胜出。我们的 Bean 用 `HIGHEST_PRECEDENCE`（= `Integer.MIN_VALUE`）压过 starter 默认的（无 `@Order` = `LOWEST_PRECEDENCE`），同 path 我们赢。
+2. **每请求新建 Agent + 新 Memory**：`AgentResolver` 接口拿到 threadId，可以按线程取出 `FileSession.todos`（跨请求活），但 Memory 用全新 `InMemoryMemory`——agent 的 `doCall` 进入"pendingIds=空 → addToMemory(msgs) → executeIteration"路径，由前端 messages 数组完整重建对话上下文。这样既避免内存累计，也保证 HITL 的 `role:'tool'` 回填能在 `agent.stream(msgs)` 里被 `AguiMessageConverter.toMsg` 正确转成 `ToolResultBlock`，触发 `ReActAgent.doCall` 的 `providedResults` 分支走 `validateAndAddToolResults` 续跑。
+
+> 📌 **代价**：每个请求约 75ms 的 Agent 构建开销（`initModels` + 3 个 Schema 加载 + 7 个工具注册），学习项目可接受；要再优化可在 `AgentFactory` 里按 `(TodoManager 实例) -> Agent` 做轻缓存。
+>
+> 📌 **starter 自动装配的旁路 Bean** 仍然存在（`ThreadSessionManager`、`AguiWebFluxHandler`、starter 默认 `aguiRoutes`），但全部走不到——我们的 `@Order(HIGHEST_PRECEDENCE)` 路由先匹配到 `/agui/run`，starter 的同 path 路由变成 dead code，无害。
+
+### 5.6 服务端验证
 
 启动后端 + 前端，跑：
 
@@ -2303,7 +2358,8 @@ git commit -m "day7: AG-UI 协议进阶 + 可观测三件套 + 收尾验收
 | 前端没收到 STATE_SNAPSHOT | `EventSource` 没连上 `/agui/state-stream/{threadId}`；或 `touchThread` 没在 SSE 端点入口调；或 bridge 已挂但 `snapshotNow()` 没在订阅时重发 |
 | STATE_DELTA 前后端字段对不上 | 服务端用 `/todos/id=<id>/status` 非标 path；前端必须用 §4.5 的 `applyOps` 解析（不能直接 `fast-json-patch.applyPatch`） |
 | HITL 弹窗不出 | 你监听了 `onToolCallEndEvent` 而不是 `onToolCallResultEvent`；end 事件不带 content。AS-Java 1.0.12 把 ToolSuspend 转成 `TOOL_CALL_END + TOOL_CALL_RESULT`，识别要看 result content 前缀 |
-| 点确认后 Agent 不续跑 | `agent.addMessage` 拒收 `role:'tool'`；用 `agent.messages.push({...} as any)`。如果仍不续跑，临时把 `server-side-memory` 改 false，前端送完整 messages 数组 |
+| 点确认后 Agent 不续跑（前端 `newMessages=[]`、后端无新 `[Submit]` 日志） | starter 1.0.12 的 `AguiRequestProcessor.extractLatestUserMessage` 在 `server-side-memory=true` 下只挑 `role="user"`，前端推的 `role:'tool'` 被静默吃掉；改 `server-side-memory=false` 又让 `DefaultAgentResolver` 拿不到 threadId。**正解**走 §5.5 自家 RouterFunction + `ThreadAgentResolver(hasMemory()=false)`。检查启动日志有 `[AguiConfig] mounting custom AGUI run route at /agui/run`，续跑应见第二次 `[AguiConfig] build agent for thread=...` |
+| 看板少 todo / 工具偶发 `Error: Tool execution failed: Spec. Rule` | `Toolkit(parallel=true)` 让 3 个 `create_*` 并发调进 `Sinks.many().multicast().tryEmitNext`，返回 `FAIL_NON_SERIALIZED`；老版 `AguiStateBridge.emit()` 的 `emitNext(handler=false)` retry 抛 `Sinks.EmissionException` 把工具炸成 framework error，TodoManager 写进去了但工具回 ERROR 给 LLM。**已修**：`emit()` 加 `synchronized` + 失败仅 log.warn 不抛 |
 | TraceId 在工具日志里丢了 | MDC 在 Reactor worker 线程不透传；Phase 3b 的 OTel `logback-mdc-1.0` 桥（默认 key=`trace_id`/`span_id`）+ TraceIdFilter 读 Span 的组合解决 |
 | logs/scope.json.log 中文乱码 | encoder 没指定 UTF-8；LogstashEncoder 默认 UTF-8，看终端 / IDE 显示设置 |
 | jq 日志 traceId 跟 Jaeger trace 对不上 | TraceIdFilter 没读 OTel Span，用了 UUID 兜底——看 §7.4 整段替换 |

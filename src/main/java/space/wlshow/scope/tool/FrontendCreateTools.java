@@ -5,6 +5,7 @@ import io.agentscope.core.tool.Tool;
 import io.agentscope.core.tool.ToolParam;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import space.wlshow.scope.observability.Stage;
 import space.wlshow.scope.schema.SchemaValidator;
 import space.wlshow.scope.schema.ValidationError;
 import space.wlshow.scope.spec.AppSpec;
@@ -50,15 +51,19 @@ public class FrontendCreateTools {
             @ToolParam(name = "label", description = "中文显示名，如 请假管理") String label,
             @ToolParam(name = "type", description = "应用分类码，缺省 23") String type
     ) {
-        AppSpec spec = new AppSpec(name, label, type);
-        JsonNode payload = Json.mapper().valueToTree(spec);
+        return Stage.call(Stage.TOOL_CALL, () -> {
+            log.info("[Tool] 调用工具 name=create_app argsHash={}",
+                    Stage.argsHash(name, label, type));
+            AppSpec spec = new AppSpec(name, label, type);
+            JsonNode payload = Json.mapper().valueToTree(spec);
 
-        String err = validate(APP_VAL, payload, "create_app");
-        if (err != null) return err;
+            String err = validate(APP_VAL, payload, "create_app");
+            if (err != null) return err;
 
-        TodoItem it = todos.add(TodoType.CREATE_APP, label, payload);
-        log.info("[Tool] create_app id={} payload={}", it.id(), payload);
-        return "APP 待办已登记：id=" + it.id() + " label=" + label;
+            TodoItem it = todos.add(TodoType.CREATE_APP, label, payload);
+            log.info("[Tool] create_app id={} payload={}", it.id(), payload);
+            return "APP 待办已登记：id=" + it.id() + " label=" + label;
+        });
     }
 
     @Tool(name = "create_module",
@@ -68,15 +73,19 @@ public class FrontendCreateTools {
             @ToolParam(name = "moduleId", description = "英文 camelCase，如 leaveApply") String moduleId,
             @ToolParam(name = "moduleDesc", description = "一句话描述模块用途") String moduleDesc
     ) {
-        ModuleSpec spec = new ModuleSpec(moduleName, moduleId, moduleDesc);
-        JsonNode payload = Json.mapper().valueToTree(spec);
+        return Stage.call(Stage.TOOL_CALL, () -> {
+            log.info("[Tool] 调用工具 name=create_module argsHash={}",
+                    Stage.argsHash(moduleName, moduleId, moduleDesc));
+            ModuleSpec spec = new ModuleSpec(moduleName, moduleId, moduleDesc);
+            JsonNode payload = Json.mapper().valueToTree(spec);
 
-        String err = validate(MODULE_VAL, payload, "create_module");
-        if (err != null) return err;
+            String err = validate(MODULE_VAL, payload, "create_module");
+            if (err != null) return err;
 
-        TodoItem it = todos.add(TodoType.CREATE_MODULE, moduleName, payload);
-        log.info("[Tool] create_module id={} payload={}", it.id(), payload);
-        return "MODULE 待办已登记：id=" + it.id() + " name=" + moduleName;
+            TodoItem it = todos.add(TodoType.CREATE_MODULE, moduleName, payload);
+            log.info("[Tool] create_module id={} payload={}", it.id(), payload);
+            return "MODULE 待办已登记：id=" + it.id() + " name=" + moduleName;
+        });
     }
 
     @Tool(name = "create_model",
@@ -92,17 +101,21 @@ public class FrontendCreateTools {
             @ToolParam(name = "parentId", description = "通常为空字符串") String parentId,
             @ToolParam(name = "fieldsJson", description = "FieldSpec 数组的 JSON 字符串") String fieldsJson
     ) {
-        List<FieldSpec> fields = Json.readList(fieldsJson, FieldSpec.class);
-        DataModelSpec spec = new DataModelSpec(name, type, pinyin, tableName, parentId, fields);
-        JsonNode payload = Json.mapper().valueToTree(spec);
+        return Stage.call(Stage.TOOL_CALL, () -> {
+            log.info("[Tool] 调用工具 name=create_model argsHash={}",
+                    Stage.argsHash(name, type, pinyin, tableName, parentId, fieldsJson));
+            List<FieldSpec> fields = Json.readList(fieldsJson, FieldSpec.class);
+            DataModelSpec spec = new DataModelSpec(name, type, pinyin, tableName, parentId, fields);
+            JsonNode payload = Json.mapper().valueToTree(spec);
 
-        String err = validate(MODEL_VAL, payload, "create_model");
-        if (err != null) return err;
+            String err = validate(MODEL_VAL, payload, "create_model");
+            if (err != null) return err;
 
-        TodoItem it = todos.add(TodoType.CREATE_MODEL, name, payload);
-        log.info("[Tool] create_model id={} fieldCount={} payload={}",
-                it.id(), fields.size(), payload);
-        return "MODEL 待办已登记：id=" + it.id() + " name=" + name + " fields=" + fields.size();
+            TodoItem it = todos.add(TodoType.CREATE_MODEL, name, payload);
+            log.info("[Tool] create_model id={} fieldCount={} payload={}",
+                    it.id(), fields.size(), payload);
+            return "MODEL 待办已登记：id=" + it.id() + " name=" + name + " fields=" + fields.size();
+        });
     }
 
     /**

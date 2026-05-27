@@ -6,6 +6,7 @@ import io.agentscope.core.tool.Tool;
 import io.agentscope.core.tool.ToolParam;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import space.wlshow.scope.observability.Stage;
 import space.wlshow.scope.schema.SchemaValidator;
 import space.wlshow.scope.schema.ValidationError;
 import space.wlshow.scope.spec.FieldSpec;
@@ -39,29 +40,33 @@ public class TodoUpdateTools {
             @ToolParam(name = "newModuleName", description = "可选，为空表示不改") String newModuleName,
             @ToolParam(name = "newModuleDesc", description = "可选，为空表示不改") String newModuleDesc
     ) {
-        Optional<TodoItem> found = findByModuleId(moduleId);
-        if (found.isEmpty()) {
-            log.warn("[Tool] update_module not-found moduleId={}", moduleId);
-            return "ERROR: 未找到 moduleId=" + moduleId;
-        }
+        return Stage.call(Stage.TOOL_CALL, () -> {
+            log.info("[Tool] 调用工具 name=update_module argsHash={}",
+                    Stage.argsHash(moduleId, newModuleName, newModuleDesc));
+            Optional<TodoItem> found = findByModuleId(moduleId);
+            if (found.isEmpty()) {
+                log.warn("[Tool] update_module not-found moduleId={}", moduleId);
+                return "ERROR: 未找到 moduleId=" + moduleId;
+            }
 
-        TodoItem it = found.get();
-        if (it.status() != TodoStatus.PENDING) {
-            log.warn("[Tool] update_module rejected id={} status={}", it.id(), it.status());
-            return "ERROR: " + it.id() + " 状态为 " + it.status() + "，不可修改";
-        }
+            TodoItem it = found.get();
+            if (it.status() != TodoStatus.PENDING) {
+                log.warn("[Tool] update_module rejected id={} status={}", it.id(), it.status());
+                return "ERROR: " + it.id() + " 状态为 " + it.status() + "，不可修改";
+            }
 
-        ObjectNode p = ((ObjectNode) it.payload()).deepCopy();
-        if (newModuleName != null && !newModuleName.isBlank()) p.put("moduleName", newModuleName);
-        if (newModuleDesc != null && !newModuleDesc.isBlank()) p.put("moduleDesc", newModuleDesc);
+            ObjectNode p = ((ObjectNode) it.payload()).deepCopy();
+            if (newModuleName != null && !newModuleName.isBlank()) p.put("moduleName", newModuleName);
+            if (newModuleDesc != null && !newModuleDesc.isBlank()) p.put("moduleDesc", newModuleDesc);
 
-        String err = validate(MODULE_VAL, p, "update_module");
-        if (err != null) return err;
+            String err = validate(MODULE_VAL, p, "update_module");
+            if (err != null) return err;
 
-        todos.replacePayload(it.id(), p);
-        log.info("[Tool] update_module id={} newName={} newDesc={} payload={}",
-                it.id(), newModuleName, newModuleDesc, p);
-        return "MODULE 已更新：" + it.id();
+            todos.replacePayload(it.id(), p);
+            log.info("[Tool] update_module id={} newName={} newDesc={} payload={}",
+                    it.id(), newModuleName, newModuleDesc, p);
+            return "MODULE 已更新：" + it.id();
+        });
     }
 
     @Tool(name = "update_model",
@@ -71,30 +76,34 @@ public class TodoUpdateTools {
             @ToolParam(name = "modelName") String modelName,
             @ToolParam(name = "appendFieldsJson") String appendFieldsJson
     ) {
-        Optional<TodoItem> found = findByModelName(modelName);
-        if (found.isEmpty()) {
-            log.warn("[Tool] update_model not-found modelName={}", modelName);
-            return "ERROR: 未找到 model name=" + modelName;
-        }
+        return Stage.call(Stage.TOOL_CALL, () -> {
+            log.info("[Tool] 调用工具 name=update_model argsHash={}",
+                    Stage.argsHash(modelName, appendFieldsJson));
+            Optional<TodoItem> found = findByModelName(modelName);
+            if (found.isEmpty()) {
+                log.warn("[Tool] update_model not-found modelName={}", modelName);
+                return "ERROR: 未找到 model name=" + modelName;
+            }
 
-        TodoItem it = found.get();
-        if (it.status() != TodoStatus.PENDING) {
-            log.warn("[Tool] update_model rejected id={} status={}", it.id(), it.status());
-            return "ERROR: " + it.id() + " 状态为 " + it.status() + "，不可修改";
-        }
+            TodoItem it = found.get();
+            if (it.status() != TodoStatus.PENDING) {
+                log.warn("[Tool] update_model rejected id={} status={}", it.id(), it.status());
+                return "ERROR: " + it.id() + " 状态为 " + it.status() + "，不可修改";
+            }
 
-        List<FieldSpec> appended = Json.readList(appendFieldsJson, FieldSpec.class);
-        ObjectNode p = ((ObjectNode) it.payload()).deepCopy();
-        var arr = (com.fasterxml.jackson.databind.node.ArrayNode) p.get("fields");
-        appended.forEach(f -> arr.add(Json.mapper().valueToTree(f)));
+            List<FieldSpec> appended = Json.readList(appendFieldsJson, FieldSpec.class);
+            ObjectNode p = ((ObjectNode) it.payload()).deepCopy();
+            var arr = (com.fasterxml.jackson.databind.node.ArrayNode) p.get("fields");
+            appended.forEach(f -> arr.add(Json.mapper().valueToTree(f)));
 
-        String err = validate(MODEL_VAL, p, "update_model");
-        if (err != null) return err;
+            String err = validate(MODEL_VAL, p, "update_model");
+            if (err != null) return err;
 
-        todos.replacePayload(it.id(), p);
-        log.info("[Tool] update_model id={} appended={} totalFields={} payload={}",
-                it.id(), appended.size(), arr.size(), p);
-        return "MODEL 已追加 " + appended.size() + " 个字段到 " + it.id();
+            todos.replacePayload(it.id(), p);
+            log.info("[Tool] update_model id={} appended={} totalFields={} payload={}",
+                    it.id(), appended.size(), arr.size(), p);
+            return "MODEL 已追加 " + appended.size() + " 个字段到 " + it.id();
+        });
     }
 
     /** 与 FrontendCreateTools.validate 同形：合规返回 null，否则返回 "ERROR: ..." 字符串。 */
