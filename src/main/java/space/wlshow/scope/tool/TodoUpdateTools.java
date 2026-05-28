@@ -27,10 +27,56 @@ public class TodoUpdateTools {
             new SchemaValidator("/schemas/module-spec.schema.json");
     private static final SchemaValidator MODEL_VAL =
             new SchemaValidator("/schemas/data-model-spec.schema.json");
+    private static final SchemaValidator APP_VAL =
+            new SchemaValidator("/schemas/app-spec.schema.json");
 
     private final TodoManager todos;
 
     public TodoUpdateTools(TodoManager todos) { this.todos = todos; }
+
+    @Tool(name = "update_app",
+            description = "修改应用的英文标识 (name) 或中文显示名 (label)。type 分类码不允许改。" +
+                    "一次会话里只允许有一条 CREATE_APP 待办，本工具不需要传 id：" +
+                    "工具内部找唯一一条 CREATE_APP 待办；若不存在或存在多条，返回 ERROR。")
+    public String updateApp(
+            @ToolParam(name = "newName",
+                    description = "可选，英文 camelCase；为空表示不改") String newName,
+            @ToolParam(name = "newLabel",
+                    description = "可选，中文显示名；为空表示不改") String newLabel
+    ) {
+        return Stage.call(Stage.TOOL_CALL, () -> {
+            log.info("[Tool] 调用工具 name=update_app argsHash={}",
+                    Stage.argsHash(newName, newLabel));
+            List<TodoItem> appTodos = todos.snapshot().stream()
+                    .filter(it -> it.type() == TodoType.CREATE_APP)
+                    .toList();
+            if (appTodos.isEmpty()) {
+                log.warn("[Tool] update_app no CREATE_APP todo");
+                return "ERROR: 当前没有应用待办，请先用 create_app 登记应用";
+            }
+            if (appTodos.size() > 1) {
+                log.warn("[Tool] update_app multiple CREATE_APP todos size={}", appTodos.size());
+                return "ERROR: 检测到 " + appTodos.size() + " 条应用待办，update_app 仅支持单应用场景";
+            }
+            TodoItem it = appTodos.get(0);
+            if (it.status() != TodoStatus.PENDING) {
+                log.warn("[Tool] update_app rejected id={} status={}", it.id(), it.status());
+                return "ERROR: " + it.id() + " 状态为 " + it.status() + "，不可修改";
+            }
+
+            ObjectNode p = ((ObjectNode) it.payload()).deepCopy();
+            if (newName != null && !newName.isBlank()) p.put("name", newName);
+            if (newLabel != null && !newLabel.isBlank()) p.put("label", newLabel);
+
+            String err = validate(APP_VAL, p, "update_app");
+            if (err != null) return err;
+
+            todos.replacePayload(it.id(), p);
+            log.info("[Tool] update_app id={} newName={} newLabel={} payload={}",
+                    it.id(), newName, newLabel, p);
+            return "APP 已更新：" + it.id();
+        });
+    }
 
     @Tool(name = "update_module",
             description = "修改一个已存在的 Module 的中文名或描述。" +
