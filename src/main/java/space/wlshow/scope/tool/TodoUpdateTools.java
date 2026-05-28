@@ -152,6 +152,57 @@ public class TodoUpdateTools {
         });
     }
 
+    @Tool(name = "update_field",
+            description = "修改数据模型的某个顶层字段的 dataType 或 comment（中文描述）。" +
+                    "通过 modelName + fieldName 定位；subs 嵌套字段本日不支持，" +
+                    "遇到请告知用户'当前仅支持顶层字段编辑'。")
+    public String updateField(
+            @ToolParam(name = "modelName") String modelName,
+            @ToolParam(name = "fieldName") String fieldName,
+            @ToolParam(name = "newDataType",
+                    description = "可选 long/int/double/string/boolean/date/array；为空不改") String newDataType,
+            @ToolParam(name = "newComment",
+                    description = "可选，字段中文描述；为空不改") String newComment
+    ) {
+        return Stage.call(Stage.TOOL_CALL, () -> {
+            log.info("[Tool] 调用工具 name=update_field argsHash={}",
+                    Stage.argsHash(modelName, fieldName, newDataType, newComment));
+            Optional<TodoItem> found = findByModelName(modelName);
+            if (found.isEmpty()) {
+                log.warn("[Tool] update_field model not-found name={}", modelName);
+                return "ERROR: 未找到 model name=" + modelName;
+            }
+            TodoItem it = found.get();
+            if (it.status() != TodoStatus.PENDING) {
+                log.warn("[Tool] update_field rejected id={} status={}", it.id(), it.status());
+                return "ERROR: " + it.id() + " 状态为 " + it.status() + "，不可修改";
+            }
+
+            ObjectNode p = ((ObjectNode) it.payload()).deepCopy();
+            com.fasterxml.jackson.databind.node.ArrayNode fields =
+                    (com.fasterxml.jackson.databind.node.ArrayNode) p.get("fields");
+            ObjectNode target = null;
+            for (JsonNode f : fields) {
+                if (fieldName.equals(f.path("name").asText())) { target = (ObjectNode) f; break; }
+            }
+            if (target == null) {
+                log.warn("[Tool] update_field field not-found model={} field={}", modelName, fieldName);
+                return "ERROR: 未找到 model=" + modelName + " 的 field=" + fieldName +
+                        "（仅支持顶层字段；可能是嵌套字段 subs，本日不支持编辑）";
+            }
+            if (newDataType != null && !newDataType.isBlank()) target.put("dataType", newDataType);
+            if (newComment != null && !newComment.isBlank()) target.put("comment", newComment);
+
+            String err = validate(MODEL_VAL, p, "update_field");
+            if (err != null) return err;
+
+            todos.replacePayload(it.id(), p);
+            log.info("[Tool] update_field id={} field={} newDataType={} newComment={}",
+                    it.id(), fieldName, newDataType, newComment);
+            return "FIELD 已更新：" + it.id() + " field=" + fieldName;
+        });
+    }
+
     /** 与 FrontendCreateTools.validate 同形：合规返回 null，否则返回 "ERROR: ..." 字符串。 */
     private static String validate(SchemaValidator v, JsonNode payload, String tool) {
         List<String> errors = v.validate(payload).stream()
