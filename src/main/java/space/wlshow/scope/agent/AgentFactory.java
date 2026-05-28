@@ -14,6 +14,7 @@ import org.slf4j.LoggerFactory;
 import space.wlshow.scope.todo.TodoManager;
 import space.wlshow.scope.tool.FrontendCreateTools;
 import space.wlshow.scope.tool.SubmitTool;
+import space.wlshow.scope.tool.TodoDeleteTools;
 import space.wlshow.scope.tool.TodoQueryTools;
 import space.wlshow.scope.tool.TodoUpdateTools;
 import space.wlshow.scope.util.Prompts;
@@ -94,6 +95,7 @@ public final class AgentFactory {
         toolkit.registerTool(new FrontendCreateTools(todos));
         toolkit.registerTool(new TodoQueryTools(todos));
         toolkit.registerTool(new TodoUpdateTools(todos));
+        toolkit.registerTool(new TodoDeleteTools(todos));
         toolkit.registerTool(new SubmitTool(todos));
 
         return ReActAgent.builder()

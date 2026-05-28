@@ -25,7 +25,9 @@ public class SubmitTool {
                     "需求分析、登记 create_app / create_module / create_model 的阶段一律不要调，" +
                     "也不要把它当成工作流的收尾步骤——结束本轮工具调用直接用一句话向用户总结即可。" +
                     "【调用方式】必须先以 confirmed=false 调一次，让系统等用户确认；" +
-                    "用户确认后系统会自动让你恢复，再以 confirmed=true 调一次完成真正下发。")
+                    "用户确认后系统会自动让你恢复，再以 confirmed=true 调一次完成真正下发。" +
+                    "【取消处理】若续跑时收到 USER_REJECTED，必须随后立即调用 cancel_submission 工具" +
+                    "清空所有待办；不要再追问用户是否要清，也不要尝试继续提交。")
     public String submit(@ToolParam(name = "confirmed",
             description = "用户是否已确认。第一次必填 false。") boolean confirmed) {
         return Stage.call(Stage.TOOL_CALL, () -> {
