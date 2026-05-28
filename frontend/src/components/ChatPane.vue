@@ -88,7 +88,7 @@ watch(
           </div>
         </div>
 
-        <div v-for="m in messages" :key="m.id" :class="['row', m.role]">
+        <div v-for="m in messages" :key="m.id" :class="['row', m.role, { 'hitl': m.kind === 'hitl-card' }]">
           <div class="avatar">{{ m.role === 'user' ? '我' : 'AI' }}</div>
           <div class="bubble-wrap">
             <div class="role-label">{{ m.role === 'user' ? 'You' : 'Agent' }}</div>
@@ -369,6 +369,10 @@ watch(
 .row.user .bubble-wrap { align-items: flex-end; }
 .row.assistant .bubble-wrap { align-items: flex-start; }
 
+/* hitl-card row：把 .bubble-wrap 固定到 assistant 气泡的最大宽度（与 max-width 同步），
+   不再随内容收缩。这样 hitl-card width:100% 始终撑到 assistant-bubble 的最大可用宽度。 */
+.row.hitl .bubble-wrap { width: 78%; }
+
 .bubble {
   padding: 12px 16px;
   border-radius: 16px;
@@ -566,5 +570,6 @@ textarea::placeholder { color: #9ca3af; }
 @media (max-width: 640px) {
   .app { padding: 12px 14px 14px; }
   .bubble-wrap { max-width: 85%; }
+  .row.hitl .bubble-wrap { width: 85%; }
 }
 </style>
