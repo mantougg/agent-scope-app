@@ -84,4 +84,39 @@ class TodoManagerTest {
         assertEquals(1, other.size());
         assertEquals(TodoStatus.RUNNING, other.get("todo-1").status());
     }
+
+    @Test
+    void remove_pendingOk() {
+        TodoManager mgr = new TodoManager();
+        TodoItem it = mgr.add(TodoType.CREATE_APP, "x", JsonNodeFactory.instance.objectNode());
+        assertTrue(mgr.remove(it.id()));
+        assertEquals(0, mgr.size());
+    }
+
+    @Test
+    void remove_unknownId_returnsFalse() {
+        TodoManager mgr = new TodoManager();
+        assertFalse(mgr.remove("todo-999"));
+    }
+
+    @Test
+    void remove_runningRejected() {
+        TodoManager mgr = new TodoManager();
+        TodoItem it = mgr.add(TodoType.CREATE_APP, "x", JsonNodeFactory.instance.objectNode());
+        mgr.markRunning(it.id());
+        assertThrows(IllegalStateException.class, () -> mgr.remove(it.id()));
+        assertEquals(1, mgr.size(), "running 项不应被移除");
+    }
+
+    @Test
+    void remove_firesOnRemove() {
+        TodoManager mgr = new TodoManager();
+        List<String> events = new ArrayList<>();
+        mgr.addListener(new TodoChangeListener() {
+            @Override public void onRemove(String id) { events.add("remove:" + id); }
+        });
+        TodoItem it = mgr.add(TodoType.CREATE_APP, "x", JsonNodeFactory.instance.objectNode());
+        mgr.remove(it.id());
+        assertEquals(List.of("remove:todo-1"), events);
+    }
 }

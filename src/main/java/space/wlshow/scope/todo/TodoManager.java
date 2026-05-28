@@ -117,6 +117,21 @@ public class TodoManager implements StateModule {
         log.info("[Todo] PAYLOAD-REPLACE id={}", id);
     }
 
+    /** 从池里移除一个 PENDING 待办，触发 {@link TodoChangeListener#onRemove}。
+     *  非 PENDING 抛 {@link IllegalStateException}；id 不存在返回 false。 */
+    public synchronized boolean remove(String id) {
+        TodoItem cur = items.get(id);
+        if (cur == null) return false;
+        if (cur.status() != TodoStatus.PENDING) {
+            throw new IllegalStateException(
+                    "非 PENDING 不可删: " + id + " status=" + cur.status());
+        }
+        items.remove(id);
+        Stage.run(Stage.TODO_UPDATE, () -> log.info("[Todo] REMOVE id={}", id));
+        listeners.forEach(l -> l.onRemove(id));
+        return true;
+    }
+
     public synchronized boolean addListenerIfAbsent(TodoChangeListener l) {
         if (listeners.stream().anyMatch(x -> x.getClass() == l.getClass())) return false;
         listeners.add(l);
