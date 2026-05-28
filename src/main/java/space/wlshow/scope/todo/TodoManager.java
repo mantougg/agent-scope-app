@@ -29,7 +29,7 @@ public class TodoManager implements StateModule {
     private final AtomicLong seq = new AtomicLong(0);
     private final List<TodoChangeListener> listeners = new ArrayList<>();
 
-    public void addListener(TodoChangeListener l) { listeners.add(l); }
+    public synchronized void addListener(TodoChangeListener l) { listeners.add(l); }
 
     /** 新增 PENDING 待办，返回生成的 id（"todo-1"、"todo-2"...）。 */
     public synchronized TodoItem add(TodoType type, String targetName, JsonNode payload) {

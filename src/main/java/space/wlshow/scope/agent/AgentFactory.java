@@ -72,7 +72,7 @@ public final class AgentFactory {
      * {@code maxIters=5} 给框架几次重试余量；happy path 一次即返（StructuredOutputHook 成功后立刻 stopAgent）。
      */
     public static ReActAgent buildParser() {
-        initModels();
+        if (!ModelRegistry.canResolve(DEFAULT_MODEL_ID)) initModels();
         return ReActAgent.builder()
                 .name("RequirementAnalyst")
                 .sysPrompt(Prompts.analyst())
@@ -87,7 +87,7 @@ public final class AgentFactory {
      * - parallel(true) 让多个 module/model 工具并发
      */
     public static ReActAgent buildAnalystWithTools(TodoManager todos, Memory memory) {
-        initModels();
+        if (!ModelRegistry.canResolve(DEFAULT_MODEL_ID)) initModels();
         Toolkit toolkit = new Toolkit(ToolkitConfig.builder()
                 .parallel(true)
                 .build());
