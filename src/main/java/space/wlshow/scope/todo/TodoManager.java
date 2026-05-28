@@ -115,6 +115,7 @@ public class TodoManager implements StateModule {
         TodoItem next = cur.withPayload(newPayload);
         items.put(id, next);
         log.info("[Todo] PAYLOAD-REPLACE id={}", id);
+        listeners.forEach(l -> l.onPayloadReplace(id, newPayload));
     }
 
     /** 从池里移除一个 PENDING 待办，触发 {@link TodoChangeListener#onRemove}。

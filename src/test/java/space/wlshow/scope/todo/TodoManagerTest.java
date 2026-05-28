@@ -119,4 +119,23 @@ class TodoManagerTest {
         mgr.remove(it.id());
         assertEquals(List.of("remove:todo-1"), events);
     }
+
+    @Test
+    void replacePayload_firesOnPayloadReplace() {
+        TodoManager mgr = new TodoManager();
+        List<String> events = new ArrayList<>();
+        mgr.addListener(new TodoChangeListener() {
+            @Override public void onPayloadReplace(String id, com.fasterxml.jackson.databind.JsonNode newPayload) {
+                events.add("payload:" + id + ":" + newPayload.path("name").asText());
+            }
+        });
+        TodoItem it = mgr.add(TodoType.CREATE_APP, "x", JsonNodeFactory.instance.objectNode());
+
+        com.fasterxml.jackson.databind.node.ObjectNode newPayload =
+                JsonNodeFactory.instance.objectNode();
+        newPayload.put("name", "renamed");
+        mgr.replacePayload(it.id(), newPayload);
+
+        assertEquals(List.of("payload:todo-1:renamed"), events);
+    }
 }
