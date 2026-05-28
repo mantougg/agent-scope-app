@@ -203,6 +203,48 @@ public class TodoUpdateTools {
         });
     }
 
+    @Tool(name = "delete_field",
+            description = "删除数据模型的某个顶层字段。subs 嵌套字段本日不支持。" +
+                    "若删后字段数为 0 会被 schema 拒收，应改用 delete_model。")
+    public String deleteField(
+            @ToolParam(name = "modelName") String modelName,
+            @ToolParam(name = "fieldName") String fieldName
+    ) {
+        return Stage.call(Stage.TOOL_CALL, () -> {
+            log.info("[Tool] 调用工具 name=delete_field argsHash={}",
+                    Stage.argsHash(modelName, fieldName));
+            Optional<TodoItem> found = findByModelName(modelName);
+            if (found.isEmpty()) {
+                return "ERROR: 未找到 model name=" + modelName;
+            }
+            TodoItem it = found.get();
+            if (it.status() != TodoStatus.PENDING) {
+                return "ERROR: " + it.id() + " 状态为 " + it.status() + "，不可修改";
+            }
+
+            ObjectNode p = ((ObjectNode) it.payload()).deepCopy();
+            com.fasterxml.jackson.databind.node.ArrayNode fields =
+                    (com.fasterxml.jackson.databind.node.ArrayNode) p.get("fields");
+            int hitIdx = -1;
+            for (int i = 0; i < fields.size(); i++) {
+                if (fieldName.equals(fields.get(i).path("name").asText())) { hitIdx = i; break; }
+            }
+            if (hitIdx < 0) {
+                return "ERROR: 未找到 model=" + modelName + " 的 field=" + fieldName +
+                        "（仅支持顶层字段；可能是嵌套字段 subs，本日不支持编辑）";
+            }
+            fields.remove(hitIdx);
+
+            String err = validate(MODEL_VAL, p, "delete_field");
+            if (err != null) return err;
+
+            todos.replacePayload(it.id(), p);
+            log.info("[Tool] delete_field id={} field={} remaining={}",
+                    it.id(), fieldName, fields.size());
+            return "FIELD 已删除：" + it.id() + " field=" + fieldName;
+        });
+    }
+
     /** 与 FrontendCreateTools.validate 同形：合规返回 null，否则返回 "ERROR: ..." 字符串。 */
     private static String validate(SchemaValidator v, JsonNode payload, String tool) {
         List<String> errors = v.validate(payload).stream()

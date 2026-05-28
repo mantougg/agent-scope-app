@@ -162,4 +162,46 @@ class TodoUpdateToolsTest {
 
         assertTrue(r.startsWith("ERROR:"), r);
     }
+
+    @Test
+    void deleteField_ok() {
+        TodoManager mgr = new TodoManager();
+        FrontendCreateTools create = new FrontendCreateTools(mgr);
+        TodoUpdateTools update = new TodoUpdateTools(mgr);
+        TodoItem model = seedModel(mgr, create);
+
+        String r = update.deleteField("employee", "phone");
+
+        assertTrue(r.contains("已删除"), r);
+        JsonNode fields = mgr.get(model.id()).payload().get("fields");
+        assertEquals(1, fields.size());
+        assertEquals("id", fields.get(0).path("name").asText());
+    }
+
+    @Test
+    void deleteField_lastField_rejectedByMinItems() {
+        TodoManager mgr = new TodoManager();
+        FrontendCreateTools create = new FrontendCreateTools(mgr);
+        TodoUpdateTools update = new TodoUpdateTools(mgr);
+        create.createModel("singleField", "ENTITY", "danziduan", "t_single", "",
+                fieldsJson("long", "id"));
+
+        String r = update.deleteField("singleField", "id");
+
+        assertTrue(r.startsWith("ERROR:"), r);
+        assertEquals(1, mgr.snapshot().get(0).payload().get("fields").size(),
+                "schema 拒收后字段不应被实际删除");
+    }
+
+    @Test
+    void deleteField_unknownField_returnsError() {
+        TodoManager mgr = new TodoManager();
+        FrontendCreateTools create = new FrontendCreateTools(mgr);
+        TodoUpdateTools update = new TodoUpdateTools(mgr);
+        seedModel(mgr, create);
+
+        String r = update.deleteField("employee", "nope");
+
+        assertTrue(r.startsWith("ERROR:"), r);
+    }
 }
