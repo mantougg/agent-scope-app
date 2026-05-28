@@ -5,7 +5,6 @@ import { useScopeAgent } from './composables/useScopeAgent'
 import ChatPane from './components/ChatPane.vue'
 import TodoBoard from './components/TodoBoard.vue'
 import TodoDetailPanel from './components/TodoDetailPanel.vue'
-import HitlConfirmModal from './components/HitlConfirmModal.vue'
 import sampleState from './mocks/sampleState.json'
 
 // 通过 URL `?mock=1` 或 `VITE_MOCK=1` 启用 mock 模式：不连后端、不订阅 SSE，
@@ -21,7 +20,6 @@ const {
   todos,
   running,
   streamingId,
-  pendingConfirm,
   send,
   resumeRun,
   loadMockState,
@@ -65,6 +63,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
         :streaming-id="streamingId"
         :is-mock="isMock"
         @send="send"
+        @decide="resumeRun"
     />
 
     <TodoBoard
@@ -78,11 +77,6 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
     <TodoDetailPanel
         :todo="selectedTodo"
         @close="closeDetail"
-    />
-
-    <HitlConfirmModal
-        :pending="pendingConfirm"
-        @decide="resumeRun"
     />
   </div>
 </template>

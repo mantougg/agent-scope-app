@@ -1,6 +1,6 @@
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { HttpAgent } from '@ag-ui/client'
-import type { HitlDecision, JsonPatchOp, PendingConfirm, Todo, UiMsg } from '../types'
+import type { HitlDecision, JsonPatchOp, Todo, UiMsg } from '../types'
 
 export interface UseScopeAgentOptions {
   mock?: boolean
@@ -19,7 +19,6 @@ export function useScopeAgent(opts: UseScopeAgentOptions = {}) {
   const todos = ref<Todo[]>([])
   const running = ref(false)
   const streamingId = ref<string | null>(null)
-  const pendingConfirm = ref<PendingConfirm | null>(null)
   const lastSubmitToolCallId = ref<string | null>(null)
 
   function mergeTodos(incoming: Todo[]) {
@@ -43,6 +42,14 @@ export function useScopeAgent(opts: UseScopeAgentOptions = {}) {
       } else if (op.path === '/todos' && op.op === 'replace') {
         arr.length = 0
         ;(op.value as Todo[]).forEach(t => arr.push(t))
+      } else if (op.op === 'remove') {
+        const m = op.path.match(/^\/todos\/id=([^/]+)$/)
+        if (m) {
+          const idx = arr.findIndex(t => t.id === m[1])
+          if (idx >= 0) arr.splice(idx, 1)
+          continue
+        }
+        console.warn('[STATE_DELTA] unhandled remove path', op.path)
       } else {
         const m = op.path.match(/^\/todos\/id=([^/]+)\/(\w+)$/)
         if (!m) {
@@ -55,8 +62,7 @@ export function useScopeAgent(opts: UseScopeAgentOptions = {}) {
           console.warn('[STATE_DELTA] todo not found id=', id)
           continue
         }
-        ;(t as Record<string, unknown>)[field] =
-            op.op === 'remove' ? undefined : op.value
+        ;(t as Record<string, unknown>)[field] = op.value
       }
     }
     todos.value = arr
@@ -92,14 +98,16 @@ export function useScopeAgent(opts: UseScopeAgentOptions = {}) {
       },
       onRunFinishedEvent: () => {
         running.value = false
-        // submit_to_frontend 的 ToolSuspend 不会产生 TOOL_CALL_RESULT，
-        // 用 TOOL_CALL_START 记下的 toolCallId + RUN_FINISHED 作为弹窗触发点
-        if (lastSubmitToolCallId.value && !pendingConfirm.value) {
-          console.log('[HITL] triggering confirm dialog for', lastSubmitToolCallId.value)
-          pendingConfirm.value = {
+        if (lastSubmitToolCallId.value) {
+          console.log('[HITL] pushing inline card for', lastSubmitToolCallId.value)
+          messages.value.push({
+            id: 'hitl-' + Date.now(),
+            role: 'assistant',
+            text: '',
+            kind: 'hitl-card',
             toolCallId: lastSubmitToolCallId.value,
-            todos: [...todos.value],
-          }
+            hitlTodos: [...todos.value],
+          })
           lastSubmitToolCallId.value = null
         }
       },
@@ -142,26 +150,19 @@ export function useScopeAgent(opts: UseScopeAgentOptions = {}) {
     }
   }
 
-  async function resumeRun(decision: HitlDecision) {
-    const pc = pendingConfirm.value
-    if (!pc) return
-    pendingConfirm.value = null
-    messages.value.push({
-      id: 'tr-ui-' + Date.now(),
-      role: 'user',
-      text: decision === 'USER_CONFIRMED' ? '[已确认下发]' : '[已取消]',
-    })
-    if (opts.mock) {
-      console.log('[mock][HITL] decision=', decision)
-      return
-    }
+  async function resumeRun(decision: HitlDecision, toolCallId: string) {
+    const card = messages.value.find(
+        m => m.kind === 'hitl-card' && m.toolCallId === toolCallId)
+    if (!card || card.hitlDecision) return
+    card.hitlDecision = decision
+
+    if (opts.mock) { console.log('[mock][HITL] decision=', decision); return }
     running.value = true
     try {
-      // role:'tool' 不能走 agent.addMessage（1.x 会拒收），直接 push 到内部 messages
       ;(agent as unknown as { messages: unknown[] }).messages.push({
         id: 'tr-' + Date.now(),
         role: 'tool',
-        toolCallId: pc.toolCallId,
+        toolCallId,
         content: decision,
       })
       await agent.runAgent({ runId: 'run-' + Date.now() })
@@ -200,11 +201,9 @@ export function useScopeAgent(opts: UseScopeAgentOptions = {}) {
   function loadMockState(state: {
     messages?: UiMsg[]
     todos?: Todo[]
-    pendingConfirm?: PendingConfirm | null
   }) {
     if (state.messages) messages.value = [...state.messages]
     if (state.todos) todos.value = [...state.todos]
-    if (state.pendingConfirm) pendingConfirm.value = state.pendingConfirm
   }
 
   onMounted(connectSse)
@@ -216,7 +215,6 @@ export function useScopeAgent(opts: UseScopeAgentOptions = {}) {
     todos,
     running,
     streamingId,
-    pendingConfirm,
     send,
     resumeRun,
     loadMockState,

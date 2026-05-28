@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { nextTick, ref, watch } from 'vue'
 import type { UiMsg } from '../types'
+import type { HitlDecision } from '../types'
+import AssistantBubble from './AssistantBubble.vue'
+import HitlInlineCard from './HitlInlineCard.vue'
 
 const props = defineProps<{
   threadId: string
@@ -12,6 +15,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   send: [text: string]
+  decide: [decision: HitlDecision, toolCallId: string]
 }>()
 
 const input = ref('')
@@ -88,9 +92,18 @@ watch(
           <div class="avatar">{{ m.role === 'user' ? '我' : 'AI' }}</div>
           <div class="bubble-wrap">
             <div class="role-label">{{ m.role === 'user' ? 'You' : 'Agent' }}</div>
-            <div class="bubble">
-              <div class="text">{{ m.text }}<span v-if="streamingId === m.id" class="cursor">▍</span></div>
+
+            <div v-if="m.role === 'user'" class="bubble">
+              <div class="text">{{ m.text }}</div>
             </div>
+
+            <HitlInlineCard v-else-if="m.kind === 'hitl-card'"
+                            :card="m"
+                            @decide="(d: HitlDecision) => emit('decide', d, m.toolCallId!)" />
+
+            <AssistantBubble v-else
+                             :text="m.text"
+                             :streaming="streamingId === m.id" />
           </div>
         </div>
       </div>

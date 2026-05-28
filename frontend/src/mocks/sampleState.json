@@ -19,6 +19,18 @@
       "id": "a-mock-2",
       "role": "assistant",
       "text": "已记下，新增一个字典模型 departmentDict。注意：该模型在 Schema 校验时失败了（缺少 subs），我已经在 Todo Board 标红，点开右侧详情可查看原始 payload。"
+    },
+    {
+      "id": "hitl-mock-1",
+      "role": "assistant",
+      "text": "",
+      "kind": "hitl-card",
+      "toolCallId": "tc-mock-1",
+      "hitlTodos": [
+        {"id": "todo-1", "type": "CREATE_APP", "targetName": "员工档案管理", "status": "PENDING"},
+        {"id": "todo-2", "type": "CREATE_MODULE", "targetName": "员工管理", "status": "PENDING"},
+        {"id": "todo-3", "type": "CREATE_MODEL", "targetName": "employee", "status": "PENDING"}
+      ]
     }
   ],
   "todos": [
@@ -90,6 +102,5 @@
         ]
       }
     }
-  ],
-  "pendingConfirm": null
+  ]
 }
