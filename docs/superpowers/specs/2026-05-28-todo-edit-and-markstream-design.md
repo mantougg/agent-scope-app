@@ -30,18 +30,21 @@
 
 ```java
 @Tool(name = "update_app",
-      description = "改应用名 / 应用描述。通过 appId 定位；不能改 appId 本身。")
-public String updateApp(@ToolParam(name="appId") String appId,
-                        @ToolParam(name="newAppName", description="可选，为空表示不改") String newAppName,
-                        @ToolParam(name="newAppDesc", description="可选，为空表示不改") String newAppDesc);
+      description = "修改应用的英文标识 (name) 或中文显示名 (label)。type 分类码不允许改。" +
+                    "一次会话里只允许有一条 CREATE_APP 待办，本工具不需要传 id：" +
+                    "工具内部找唯一一条 CREATE_APP 待办；若不存在或存在多条，返回 ERROR。")
+public String updateApp(@ToolParam(name="newName", description="可选，英文 camelCase；为空表示不改") String newName,
+                        @ToolParam(name="newLabel", description="可选，中文显示名；为空表示不改") String newLabel);
 
 @Tool(name = "update_field",
-      description = "修改数据模型的某个字段类型 / 描述。通过 modelName + fieldName 定位顶层字段；" +
-                    "subs 嵌套字段本日不支持，遇到请告知用户'当前仅支持顶层字段编辑'。")
+      description = "修改数据模型的某个顶层字段的 dataType 或 comment（中文描述）。" +
+                    "通过 modelName + fieldName 定位；subs 嵌套字段本日不支持，" +
+                    "遇到请告知用户'当前仅支持顶层字段编辑'。")
 public String updateField(@ToolParam(name="modelName") String modelName,
                           @ToolParam(name="fieldName") String fieldName,
-                          @ToolParam(name="newType", description="可选 STRING/INT/DECIMAL/DATE/BOOLEAN/ENTITY/REF；为空不改") String newType,
-                          @ToolParam(name="newDesc", description="可选；为空不改") String newDesc);
+                          @ToolParam(name="newDataType",
+                              description="可选 long/int/double/string/boolean/date/array；为空不改") String newDataType,
+                          @ToolParam(name="newComment", description="可选，字段中文描述；为空不改") String newComment);
 
 @Tool(name = "delete_field",
       description = "删除数据模型的某个顶层字段。subs 嵌套字段本日不支持。")
@@ -123,7 +126,7 @@ public void onPayloadReplace(String id, JsonNode newPayload) {
 
 | 工具 | 校验 |
 |---|---|
-| `update_app` | 不过 schema（应用名字段简单，依赖 ToolParam 类型约束） |
+| `update_app` | 改完 payload 必须过 `APP_VAL`（`/schemas/app-spec.schema.json`）兜底 `name` 的 `pattern: ^[a-zA-Z][a-zA-Z0-9]*$` 与 `label` 的 `minLength: 1` |
 | `update_field` / `delete_field` | 改完后 payload 必须过 `MODEL_VAL`（`/schemas/data-model-spec.schema.json`）兜底 |
 | `delete_module` / `delete_model` | 不重组 payload，无需 schema |
 | `cancel_submission` | 不涉及 payload |
@@ -400,8 +403,8 @@ LLM 流式回复 "已取消并清空所有待办，请重新描述需求"（mark
 
 | 层 | 用例 | 落点 |
 |---|---|---|
-| 后端单测 | `updateApp_happy` / `updateApp_unknownAppId` / `updateApp_runningTodo_rejected` | `tool/TodoUpdateToolsTest`（若不存在则新建，否则追加） |
-| 后端单测 | `updateField_changeType_ok` / `updateField_unknownField` / `updateField_nestedField_rejected` / `updateField_schemaMinItemsRespected` | 同上 |
+| 后端单测 | `updateApp_changeLabel_ok` / `updateApp_changeName_ok` / `updateApp_badNamePattern_rejected` / `updateApp_noAppTodo_rejected` / `updateApp_multipleAppTodos_rejected` / `updateApp_runningTodo_rejected` | `tool/TodoUpdateToolsTest`（若不存在则新建，否则追加） |
+| 后端单测 | `updateField_changeDataType_ok` / `updateField_changeComment_ok` / `updateField_unknownField_returnsError` / `updateField_badDataType_rejected` | 同上 |
 | 后端单测 | `deleteField_ok` / `deleteField_lastField_rejected`（若 schema 有 minItems） | 同上 |
 | 后端单测 | `deleteModule_happy` / `deleteModel_happy` / `deleteRunning_rejected` | `tool/TodoDeleteToolsTest`（新建） |
 | 后端单测 | `cancelSubmission_clearsAll` / `cancelSubmission_emptyOk` | 同上 |
