@@ -73,6 +73,21 @@ public class AguiStateBridge implements TodoChangeListener {
         log.debug("[StateBridge] STATE_DELTA clear");
     }
 
+    @Override
+    public void onRemove(String id) {
+        emit(new StateDelta(threadId, SIDE_RUN_ID,
+                List.of(JsonPatchOperation.remove("/todos/id=" + id))));
+        log.debug("[StateBridge] STATE_DELTA remove id={}", id);
+    }
+
+    @Override
+    public void onPayloadReplace(String id,
+                                 com.fasterxml.jackson.databind.JsonNode newPayload) {
+        emit(new StateDelta(threadId, SIDE_RUN_ID,
+                List.of(JsonPatchOperation.replace("/todos/id=" + id + "/payload", newPayload))));
+        log.debug("[StateBridge] STATE_DELTA replace payload id={}", id);
+    }
+
     /**
      * Toolkit 配 {@code parallel=true} 时多个 {@code create_*} 在不同线程并发调
      * {@link TodoManager#add}，进而并发触发本方法。{@code Sinks.many().multicast()}
