@@ -88,7 +88,7 @@ watch(
           </div>
         </div>
 
-        <div v-for="m in messages" :key="m.id" :class="['row', m.role, { 'hitl': m.kind === 'hitl-card' }]">
+        <div v-for="m in messages" :key="m.id" :class="['row', m.role]">
           <div class="avatar">{{ m.role === 'user' ? '我' : 'AI' }}</div>
           <div class="bubble-wrap">
             <div class="role-label">{{ m.role === 'user' ? 'You' : 'Agent' }}</div>
@@ -369,9 +369,6 @@ watch(
 .row.user .bubble-wrap { align-items: flex-end; }
 .row.assistant .bubble-wrap { align-items: flex-start; }
 
-/* hitl-card 横向占满 chat 列，避开 .bubble-wrap 78% 的限制 */
-.row.hitl .bubble-wrap { max-width: none; flex: 1; min-width: 0; }
-
 .bubble {
   padding: 12px 16px;
   border-radius: 16px;
@@ -569,6 +566,5 @@ textarea::placeholder { color: #9ca3af; }
 @media (max-width: 640px) {
   .app { padding: 12px 14px 14px; }
   .bubble-wrap { max-width: 85%; }
-  .row.hitl .bubble-wrap { max-width: none; }
 }
 </style>
