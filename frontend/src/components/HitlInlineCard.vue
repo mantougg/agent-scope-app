@@ -43,7 +43,8 @@ defineEmits<{ decide: [decision: HitlDecision] }>()
   border-radius: 14px;
   padding: 14px 16px;
   box-shadow: 0 8px 24px rgba(99, 102, 241, 0.10);
-  max-width: 480px;
+  width: 100%;
+  box-sizing: border-box;
   font-size: 14px;
   color: #111827;
 }
