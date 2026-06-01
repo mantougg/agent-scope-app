@@ -60,10 +60,10 @@ watch(
     <div class="app">
       <header class="app-header">
         <div class="brand">
-          <div class="logo">S</div>
+          <div class="logo">AS</div>
           <div class="title-block">
-            <h1>Scope</h1>
-            <span class="subtitle">Day 6 · AG-UI 联调</span>
+            <h1>AgentScope</h1>
+            <span class="subtitle">AgentScope调试学习</span>
           </div>
         </div>
         <span v-if="isMock" class="mock-badge" title="当前为 mock 模式，未连接后端">MOCK</span>
